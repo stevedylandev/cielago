@@ -11,11 +11,23 @@ use cielago::model::Collection;
 use cielago::openapi;
 use cielago::store::{self, AppConfig};
 
+const BANNER: &str = r#"
+
+     c i e l a g o
+                      
+        .-'"/'.       
+     _-"   (   '-_     
+ _.-'       )     "-._ 
+         .-'          `
+____________ _____  __
+"#;
+
 #[derive(Parser)]
 #[command(
     name = "cielago",
     version,
-    about = "A Postman-like TUI driven by OpenAPI collections"
+    about = "Like Postman but it actually works",
+    before_help = BANNER
 )]
 struct Cli {
     #[command(subcommand)]
