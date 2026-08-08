@@ -59,6 +59,13 @@ enum Command {
     Edit { name: String },
     /// Rename a collection (renames its file too)
     Rename { name: String, new_name: String },
+    /// Replace a collection's requests from a spec, keeping auth/vars/servers
+    Update {
+        /// Collection to update
+        name: String,
+        /// File path or http(s) URL of the spec to pull routes from
+        source: String,
+    },
     /// Show details about a collection
     Info { name: String },
     /// Print the path of a collection's JSON file
@@ -76,6 +83,7 @@ async fn main() -> Result<()> {
         Some(Command::Delete { name, force }) => cmd_delete(&name, force),
         Some(Command::Edit { name }) => cmd_edit(&name),
         Some(Command::Rename { name, new_name }) => cmd_rename(&name, &new_name),
+        Some(Command::Update { name, source }) => cmd_update(&name, &source).await,
         Some(Command::Info { name }) => cmd_info(&name),
         Some(Command::Path { name }) => cmd_path(&name),
         None => cmd_open(None).await,
@@ -307,6 +315,35 @@ fn cmd_rename(name: &str, new_name: &str) -> Result<()> {
         "Renamed \"{name}\" -> \"{new_name}\" ({})",
         new_path.display()
     );
+    Ok(())
+}
+
+/// Refresh a collection's routes from a spec without touching the rest of it.
+/// Only `requests` is replaced (existing routes are overwritten); auth,
+/// variables, servers, active server and view state stay as the user left
+/// them. `last_request` is cleared because re-import mints new request ids, so
+/// the old pointer would dangle.
+async fn cmd_update(name: &str, source: &str) -> Result<()> {
+    let name = store::resolve_collection(name)?;
+    let mut collection = store::load_collection(&name)?;
+
+    let doc = openapi::load_spec(source).await?;
+    // Import under the collection's own name so the throwaway result matches;
+    // only its `requests` are pulled across.
+    let imported = openapi::import_spec(&doc, &collection.name, Some(source.to_string()));
+
+    let before = collection.requests.len();
+    let after = imported.requests.len();
+    collection.replace_requests_from(imported);
+    collection.spec_source = Some(source.to_string());
+
+    let path = store::save_collection(&collection)?;
+    println!(
+        "Updated collection \"{}\" -> {}",
+        collection.name,
+        path.display()
+    );
+    println!("  {before} -> {after} requests");
     Ok(())
 }
 

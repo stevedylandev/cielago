@@ -235,6 +235,42 @@ async fn collection_survives_save_load_roundtrip() {
     );
 }
 
+#[tokio::test]
+async fn update_replaces_routes_but_keeps_everything_else() {
+    let mut c = import_fixture("petstore30.yaml", "pets").await;
+    assert_eq!(c.requests.len(), 4);
+
+    // User customisations that an update must preserve.
+    c.variables
+        .push(cielago::model::KeyValueRow::new("tenant", "acme", true));
+    let auth = c.auth.as_mut().unwrap();
+    auth.client_id = "my-id".into();
+    auth.client_secret = "my-secret".into();
+    c.active_server = 1;
+    c.last_request = Some(c.requests[0].id);
+    let servers = c.servers.clone();
+
+    // Routes come from a different spec.
+    let imported = import_fixture("api31.json", "pets").await;
+    c.replace_requests_from(imported);
+
+    // Requests were replaced wholesale by the new spec's...
+    assert_eq!(c.requests.len(), 1);
+    assert_eq!(c.requests[0].path, "/things");
+    // ...and the now-stale selection pointer was dropped.
+    assert!(c.last_request.is_none());
+
+    // Everything else is exactly as the user left it.
+    assert_eq!(c.servers, servers);
+    assert_eq!(c.active_server, 1);
+    let tenant = c.variables.iter().find(|v| v.key == "tenant").unwrap();
+    assert_eq!(tenant.value, "acme");
+    let auth = c.auth.as_ref().unwrap();
+    assert_eq!(auth.token_url, "https://auth.pets.example.com/oauth/token");
+    assert_eq!(auth.client_id, "my-id");
+    assert_eq!(auth.client_secret, "my-secret");
+}
+
 #[test]
 fn variables_map_respects_enabled() {
     let vars = vec![

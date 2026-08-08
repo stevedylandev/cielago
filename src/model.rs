@@ -106,6 +106,15 @@ impl Collection {
     pub fn base_url(&self) -> Option<&str> {
         self.servers.get(self.active_server).map(|s| s.as_str())
     }
+
+    /// Take the routes from a freshly imported collection, overwriting this
+    /// collection's `requests` while leaving auth, variables, servers, active
+    /// server and view state as they were. `last_request` is dropped because
+    /// import mints new request ids, so an old pointer would dangle.
+    pub fn replace_requests_from(&mut self, imported: Collection) {
+        self.requests = imported.requests;
+        self.last_request = None;
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
