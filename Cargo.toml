@@ -2,9 +2,15 @@
 name = "cielago"
 version = "0.1.2"
 edition = "2024"
+authors = ["Steve Simkins <stevedsimkins@gmail.com>"]
+description = "Like Postman but actually works"
 repository = "https://github.com/stevedylandev/cielago"
-description = "API Client TUI in Rust"
 homepage = "https://github.com/stevedylandev/cielago"
+license = "MIT"
+readme = "README.md"
+keywords = ["tui", "api", "http", "client", "terminal"]
+categories = ["command-line-utilities", "development-tools"]
+exclude = ["/.github", "/dist-workspace.toml", "/cliff.toml"]
 
 [dependencies]
 anyhow = "1.0.104"
