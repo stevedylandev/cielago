@@ -1,0 +1,50 @@
+name: Changelog
+
+# Regenerate CHANGELOG.md on every push to main.
+# Tags (v*.*.*) are treated as release versions by git-cliff.
+on:
+  push:
+    branches:
+      - main
+    tags-ignore:
+      - '**'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: changelog-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  changelog:
+    runs-on: ubuntu-latest
+    # Avoid loops: skip the commit this workflow itself pushes.
+    if: github.actor != 'github-actions[bot]'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Generate changelog
+        uses: orhun/git-cliff-action@v4
+        with:
+          config: cliff.toml
+          args: --verbose
+        env:
+          OUTPUT: CHANGELOG.md
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Commit changelog
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git diff --quiet CHANGELOG.md; then
+            echo "No changelog changes."
+            exit 0
+          fi
+          git add CHANGELOG.md
+          git commit -m "chore: update changelog [skip ci]"
+          git push
