@@ -7,6 +7,7 @@ All notable changes to this project will be documented in this file.
 ### Miscellaneous Tasks
 
 - Add changelog
+- Init changelog
 
 ## [0.1.2] - 2026-08-08
 
