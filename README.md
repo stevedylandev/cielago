@@ -24,6 +24,12 @@ Like Postman but it actually works. Terminal native HTTP request builder with Op
 brew install stevedylandev/tap/cielago
 ```
 
+### Cargo 
+
+```bash
+cargo install cielago
+```
+
 ### Prebuilt binaries
 
 Grab a binary for your platform from the [releases page](https://github.com/stevedylandev/cielago/releases), or run the install script:
