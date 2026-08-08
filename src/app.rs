@@ -21,7 +21,7 @@ use uuid::Uuid;
 
 use crate::http::{HttpResponse, OAuthToken, SendOutcome, send_with_auth, split_url_input};
 use crate::model::{
-    AuthKind, Collection, KeyValueRow, LabelMode, OAuthConfig, SavedRequest, variables_map,
+    AuthKind, Collection, KeyValueRow, LabelMode, Method, OAuthConfig, SavedRequest, variables_map,
 };
 use crate::store::{self, AppConfig};
 use crate::{input, ui};
@@ -753,15 +753,19 @@ impl App {
                 .selected_request()
                 .map(|r| r.name.clone())
                 .unwrap_or_default(),
-            // Prefill the path only, not `base_url() + path`: re-serializing
+            // Prefill `method path`, not `base_url() + path`: re-serializing
             // the full URL would rebuild the query from the table and lose each
             // row's `enabled` flag. The origin is visible in the URL bar anyway.
-            // A bare `/` (what `SavedRequest::blank` gives a new request) is
-            // dropped, so pasting a URL into a fresh request isn't prefixed by it.
+            // The leading verb doubles as the method editor — `apply_url_input`
+            // parses it back — and shows the current/default method up front. A
+            // bare `/` (what `SavedRequest::blank` gives a new request) is
+            // dropped, so a fresh request prefills as `GET ` awaiting a route.
             EditTarget::Url => self
                 .selected_request()
-                .map(|r| r.path.clone())
-                .filter(|p| p != "/")
+                .map(|r| {
+                    let path = if r.path == "/" { "" } else { &r.path };
+                    format!("{} {path}", r.method)
+                })
                 .unwrap_or_default(),
             EditTarget::NewRequest | EditTarget::EnvNew => String::new(),
             EditTarget::AuthField(i) => self.auth_field_value(i),
@@ -858,6 +862,23 @@ impl App {
             self.status = "No request selected".into();
             return;
         };
+        // A leading HTTP verb sets the method and is stripped before URL
+        // parsing, so `POST /pets` fixes method and path in one edit — the same
+        // single field a new request chains into after naming. A bare path
+        // leaves the current method untouched. The split is on the first space
+        // only, and the token must parse as a method, so a pathless `delete`
+        // typed alone stays a path, not a verb.
+        let mut set_method: Option<Method> = None;
+        let input = match input.trim().split_once(char::is_whitespace) {
+            Some((head, rest)) if !rest.trim().is_empty() => match Method::parse(head) {
+                Some(m) => {
+                    set_method = Some(m);
+                    rest.trim()
+                }
+                None => input,
+            },
+            _ => input,
+        };
         // Something that names a scheme but isn't http(s) is a typo, not a
         // relative path — say so rather than filing it under `path`. The
         // scheme-shape check matters: it keeps a stray `/api/https://…` out of
@@ -899,6 +920,12 @@ impl App {
         }
 
         let req = &mut self.collection.requests[i];
+        if let Some(m) = set_method
+            && req.method != m
+        {
+            req.method = m;
+            notes.push(format!("method → {m}"));
+        }
         req.path = parts.path;
         if let Some(query) = parts.query {
             notes.push(format!("{} query param(s)", query.len()));

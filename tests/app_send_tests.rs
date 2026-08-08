@@ -59,6 +59,27 @@ async fn send_from_app_updates_response_pane() {
     assert!(uuid::Uuid::parse_str(id).is_ok(), "got {id}");
 }
 
+#[test]
+fn url_input_leading_verb_sets_method() {
+    let mut app = app_with("http://example.com".into());
+    app.select_request(0);
+
+    // A leading verb sets the method and is stripped from the path.
+    app.apply_url_input("post /pets");
+    assert_eq!(app.collection.requests[0].method, Method::Post);
+    assert_eq!(app.collection.requests[0].path, "/pets");
+
+    // A bare path leaves the method untouched.
+    app.apply_url_input("/pets/1");
+    assert_eq!(app.collection.requests[0].method, Method::Post);
+    assert_eq!(app.collection.requests[0].path, "/pets/1");
+
+    // A lone verb with no remainder is a path, not a method.
+    app.apply_url_input("delete");
+    assert_eq!(app.collection.requests[0].method, Method::Post);
+    assert_eq!(app.collection.requests[0].path, "/delete");
+}
+
 #[tokio::test]
 async fn send_with_oauth_fetches_and_caches_token() {
     let server = MockServer::start().await;
@@ -123,4 +144,16 @@ async fn send_without_server_shows_status_error() {
     app.send_selected();
     assert!(!app.sending);
     assert!(app.status.contains("No server configured"));
+}
+
+// After naming a new request, the flow chains into the URL edit prefilled
+// with the default method so `GET ` is shown awaiting a route.
+#[test]
+fn new_request_chains_to_url_prefilled_with_method() {
+    let mut app = app_with("http://example.com".into());
+    app.start_edit(cielago::app::EditTarget::NewRequest);
+    app.input.set("make thing");
+    app.commit_edit();
+    assert_eq!(app.editing, Some(cielago::app::EditTarget::Url));
+    assert_eq!(app.input.buf, "GET ");
 }

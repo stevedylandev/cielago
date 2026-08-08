@@ -215,7 +215,7 @@ fn url_edit_prompt_shows_in_the_status_bar() {
     let mut app = test_app();
     app.start_edit(cielago::app::EditTarget::Url);
     let buf = render(&mut app, 100, 40);
-    assert!(screen(&buf).contains("url> /pets"));
+    assert!(screen(&buf).contains("url (verb path)> POST /pets"));
 }
 
 #[test]
@@ -231,4 +231,17 @@ fn help_lists_duplicate_and_new_collection() {
     let bottom = screen(&render(&mut app, 100, 60));
     assert!(bottom.contains(":new"));
     assert!(bottom.contains(":open"));
+}
+
+#[test]
+fn tmp_new_request_render_shows_get() {
+    let mut app = test_app();
+    app.start_edit(cielago::app::EditTarget::NewRequest);
+    app.input.set("make thing");
+    app.commit_edit();
+    let buf = render(&mut app, 100, 40);
+    let s = screen(&buf);
+    let line = s.lines().find(|l| l.contains("url (verb path)")).unwrap_or("<none>");
+    println!("PROMPT LINE: {:?}", line);
+    assert!(s.contains("url (verb path)> GET"), "screen missing GET prefill");
 }
