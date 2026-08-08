@@ -1,5 +1,7 @@
 # cielago
 
+![cover](https://files.stevedylan.dev/cielago-demo.jpg)
+
 A vim-style TUI for building and sending HTTP requests, organized into
 collections you can import straight from an OpenAPI spec.
 
