@@ -1,6 +1,6 @@
 [package]
 name = "cielago"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 repository = "https://github.com/stevedylandev/cielago"
 description = "API Client TUI in Rust"
