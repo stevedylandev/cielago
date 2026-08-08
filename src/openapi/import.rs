@@ -68,10 +68,9 @@ fn extract_oauth(doc: &Value) -> Option<OAuthConfig> {
             .unwrap_or_default();
         return Some(OAuthConfig {
             token_url,
-            client_id: String::new(),
-            client_secret: String::new(),
             scopes,
             auth_style: AuthStyle::Basic,
+            ..Default::default()
         });
     }
     None

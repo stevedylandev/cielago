@@ -430,29 +430,33 @@ fn handle_popup(app: &mut App, key: KeyEvent) {
             }
             _ => {}
         },
-        Popup::Auth => match key.code {
-            KeyCode::Esc => {
-                app.apply_auth_form();
-                app.popup = Popup::None;
-                app.status = "Auth config saved".into();
-            }
-            KeyCode::Char('j') | KeyCode::Down | KeyCode::Tab => {
-                app.auth_field = (app.auth_field + 1) % App::AUTH_FIELDS.len();
-            }
-            KeyCode::Char('k') | KeyCode::Up | KeyCode::BackTab => {
-                app.auth_field =
-                    (app.auth_field + App::AUTH_FIELDS.len() - 1) % App::AUTH_FIELDS.len();
-            }
-            KeyCode::Enter | KeyCode::Char('i') => {
-                if app.auth_field == 4 {
-                    app.toggle_auth_style();
-                } else {
-                    app.start_edit(EditTarget::AuthField(app.auth_field));
+        Popup::Auth => {
+            let count = app.auth_fields().len();
+            match key.code {
+                KeyCode::Esc => {
+                    app.apply_auth_form();
+                    app.popup = Popup::None;
+                    app.status = "Auth config saved".into();
                 }
+                KeyCode::Char('j') | KeyCode::Down | KeyCode::Tab => {
+                    app.auth_field = (app.auth_field + 1) % count;
+                }
+                KeyCode::Char('k') | KeyCode::Up | KeyCode::BackTab => {
+                    app.auth_field = (app.auth_field + count - 1) % count;
+                }
+                KeyCode::Enter | KeyCode::Char('i') => {
+                    if app.auth_field_at(app.auth_field).is_toggle() {
+                        app.toggle_auth_field(app.auth_field);
+                    } else {
+                        app.start_edit(EditTarget::AuthField(app.auth_field));
+                    }
+                }
+                KeyCode::Char(' ') if app.auth_field_at(app.auth_field).is_toggle() => {
+                    app.toggle_auth_field(app.auth_field);
+                }
+                _ => {}
             }
-            KeyCode::Char(' ') if app.auth_field == 4 => app.toggle_auth_style(),
-            _ => {}
-        },
+        }
         Popup::None => {}
     }
 }

@@ -85,6 +85,7 @@ async fn send_with_oauth_fetches_and_caches_token() {
         client_secret: "secret".into(),
         scopes: vec![],
         auth_style: cielago::model::AuthStyle::Basic,
+        ..Default::default()
     });
 
     // First send: fetches a token.

@@ -5,6 +5,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result, anyhow, bail};
 use serde_json::Value;
 
+use super::secret::resolve_secret;
 use crate::model::{AuthStyle, OAuthConfig};
 
 /// Clock skew so tokens are refreshed slightly before their stated expiry.
@@ -31,14 +32,19 @@ pub async fn fetch_token(client: &reqwest::Client, cfg: &OAuthConfig) -> Result<
         form.push(("scope", cfg.scopes.join(" ")));
     }
 
+    // The client secret may be a `$(…)` command (e.g. a password manager read);
+    // resolve it just before the exchange so it never sits in memory longer.
+    let client_secret =
+        resolve_secret(&cfg.client_secret).context("resolving OAuth client secret")?;
+
     let mut rb = client.post(&cfg.token_url);
     match cfg.auth_style {
         AuthStyle::Basic => {
-            rb = rb.basic_auth(cfg.client_id.clone(), Some(cfg.client_secret.clone()));
+            rb = rb.basic_auth(cfg.client_id.clone(), Some(client_secret));
         }
         AuthStyle::Post => {
             form.push(("client_id", cfg.client_id.clone()));
-            form.push(("client_secret", cfg.client_secret.clone()));
+            form.push(("client_secret", client_secret));
         }
     }
 

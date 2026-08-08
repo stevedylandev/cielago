@@ -213,6 +213,7 @@ mod tests {
             client_secret: "secret".into(),
             scopes: vec!["read".into()],
             auth_style: crate::model::AuthStyle::Basic,
+            ..Default::default()
         });
         let mut r = crate::model::SavedRequest::blank("list pets");
         r.method = Method::Post;

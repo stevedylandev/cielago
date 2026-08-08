@@ -20,7 +20,9 @@ use tui_textarea::TextArea;
 use uuid::Uuid;
 
 use crate::http::{HttpResponse, OAuthToken, SendOutcome, send_with_auth, split_url_input};
-use crate::model::{Collection, KeyValueRow, LabelMode, OAuthConfig, SavedRequest, variables_map};
+use crate::model::{
+    AuthKind, Collection, KeyValueRow, LabelMode, OAuthConfig, SavedRequest, variables_map,
+};
 use crate::store::{self, AppConfig};
 use crate::{input, ui};
 
@@ -134,7 +136,40 @@ pub enum EditTarget {
     /// sets the collection's server — see [`App::apply_url_input`].
     Url,
     EnvNew,
+    /// Index into [`App::auth_fields`] for the current auth kind. An index (not
+    /// the [`AuthField`] itself) so the enum stays `Copy`-cheap and the cursor
+    /// and edit target share one notion of "which row".
     AuthField(usize),
+}
+
+/// One editable row in the auth popup. Which rows show depends on the selected
+/// [`AuthKind`]; [`App::auth_fields`] builds the list.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AuthField {
+    /// The scheme selector (a toggle, not a text field).
+    Kind,
+    /// Bearer token, or API-key value (secret).
+    Token,
+    /// API-key header name.
+    Header,
+    TokenUrl,
+    ClientId,
+    ClientSecret,
+    Scopes,
+    /// OAuth client-auth placement (a toggle, not a text field).
+    Style,
+}
+
+impl AuthField {
+    /// Rows that carry a secret and should render masked.
+    pub fn is_secret(self) -> bool {
+        matches!(self, AuthField::Token | AuthField::ClientSecret)
+    }
+
+    /// Rows edited by toggling rather than typing.
+    pub fn is_toggle(self) -> bool {
+        matches!(self, AuthField::Kind | AuthField::Style)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -919,56 +954,117 @@ impl App {
 
     // ----- auth popup -----
 
-    pub const AUTH_FIELDS: [&'static str; 5] = [
-        "Token URL",
-        "Client ID",
-        "Client Secret",
-        "Scopes (space separated)",
-        "Auth style",
-    ];
-
     pub fn open_auth_popup(&mut self) {
-        self.auth_form = self.collection.auth.clone().unwrap_or_default();
+        // A brand-new config defaults to bearer — the simplest scheme, and the
+        // one this popup mostly exists to make reachable. Existing configs open
+        // on whatever `kind` they were saved with.
+        self.auth_form = self.collection.auth.clone().unwrap_or(OAuthConfig {
+            kind: AuthKind::Bearer,
+            ..Default::default()
+        });
         self.auth_field = 0;
         self.popup = Popup::Auth;
     }
 
+    /// The rows shown for the form's current auth kind, in display order. Always
+    /// leads with [`AuthField::Kind`] so the scheme is switchable from any state.
+    pub fn auth_fields(&self) -> Vec<AuthField> {
+        let mut fields = vec![AuthField::Kind];
+        match self.auth_form.kind {
+            AuthKind::Bearer => fields.push(AuthField::Token),
+            AuthKind::ApiKey => fields.extend([AuthField::Header, AuthField::Token]),
+            AuthKind::Oauth2 => fields.extend([
+                AuthField::TokenUrl,
+                AuthField::ClientId,
+                AuthField::ClientSecret,
+                AuthField::Scopes,
+                AuthField::Style,
+            ]),
+        }
+        fields
+    }
+
+    /// The [`AuthField`] under the cursor, resolving `auth_field` against the
+    /// current kind's row list (clamped, so a stale index never panics).
+    pub fn auth_field_at(&self, i: usize) -> AuthField {
+        let fields = self.auth_fields();
+        fields[i.min(fields.len() - 1)]
+    }
+
+    pub fn auth_field_label(&self, field: AuthField) -> &'static str {
+        match field {
+            AuthField::Kind => "Auth type",
+            AuthField::Token => match self.auth_form.kind {
+                AuthKind::ApiKey => "API key value",
+                _ => "Bearer token",
+            },
+            AuthField::Header => "Header name",
+            AuthField::TokenUrl => "Token URL",
+            AuthField::ClientId => "Client ID",
+            AuthField::ClientSecret => "Client Secret",
+            AuthField::Scopes => "Scopes (space separated)",
+            AuthField::Style => "Auth style",
+        }
+    }
+
     pub fn auth_field_value(&self, i: usize) -> String {
-        match i {
-            0 => self.auth_form.token_url.clone(),
-            1 => self.auth_form.client_id.clone(),
-            2 => self.auth_form.client_secret.clone(),
-            3 => self.auth_form.scopes.join(" "),
-            4 => match self.auth_form.auth_style {
+        match self.auth_field_at(i) {
+            AuthField::Kind => self.auth_form.kind.title().to_string(),
+            AuthField::Token => self.auth_form.token.clone(),
+            AuthField::Header => self.auth_form.header.clone(),
+            AuthField::TokenUrl => self.auth_form.token_url.clone(),
+            AuthField::ClientId => self.auth_form.client_id.clone(),
+            AuthField::ClientSecret => self.auth_form.client_secret.clone(),
+            AuthField::Scopes => self.auth_form.scopes.join(" "),
+            AuthField::Style => match self.auth_form.auth_style {
                 crate::model::AuthStyle::Basic => "basic".into(),
                 crate::model::AuthStyle::Post => "post".into(),
             },
-            _ => String::new(),
         }
     }
 
     pub fn set_auth_field(&mut self, i: usize, value: &str) {
-        match i {
-            0 => self.auth_form.token_url = value.to_string(),
-            1 => self.auth_form.client_id = value.to_string(),
-            2 => self.auth_form.client_secret = value.to_string(),
-            3 => self.auth_form.scopes = value.split_whitespace().map(String::from).collect(),
+        match self.auth_field_at(i) {
+            AuthField::Token => self.auth_form.token = value.to_string(),
+            AuthField::Header => self.auth_form.header = value.to_string(),
+            AuthField::TokenUrl => self.auth_form.token_url = value.to_string(),
+            AuthField::ClientId => self.auth_form.client_id = value.to_string(),
+            AuthField::ClientSecret => self.auth_form.client_secret = value.to_string(),
+            AuthField::Scopes => {
+                self.auth_form.scopes = value.split_whitespace().map(String::from).collect()
+            }
+            // Toggles carry no typed value.
+            AuthField::Kind | AuthField::Style => {}
+        }
+    }
+
+    /// Advance the toggle under the cursor. `Kind` cycles the scheme (which
+    /// changes the row list — the cursor stays put on `Kind` at index 0), and
+    /// `Style` flips the OAuth client-auth placement. No-op on text fields.
+    pub fn toggle_auth_field(&mut self, i: usize) {
+        match self.auth_field_at(i) {
+            AuthField::Kind => self.auth_form.kind = self.auth_form.kind.next(),
+            AuthField::Style => {
+                self.auth_form.auth_style = match self.auth_form.auth_style {
+                    crate::model::AuthStyle::Basic => crate::model::AuthStyle::Post,
+                    crate::model::AuthStyle::Post => crate::model::AuthStyle::Basic,
+                }
+            }
             _ => {}
         }
     }
 
-    pub fn toggle_auth_style(&mut self) {
-        self.auth_form.auth_style = match self.auth_form.auth_style {
-            crate::model::AuthStyle::Basic => crate::model::AuthStyle::Post,
-            crate::model::AuthStyle::Post => crate::model::AuthStyle::Basic,
-        };
-    }
-
-    /// Apply the auth form to the collection (called when the popup closes).
+    /// Apply the auth form to the collection (called when the popup closes). A
+    /// form with no meaningful field set clears auth entirely, so cycling to a
+    /// scheme and leaving it blank doesn't attach an unusable config.
     pub fn apply_auth_form(&mut self) {
-        let empty = self.auth_form.token_url.is_empty()
-            && self.auth_form.client_id.is_empty()
-            && self.auth_form.client_secret.is_empty();
+        let f = &self.auth_form;
+        let empty = f.token.is_empty()
+            && f.header.is_empty()
+            && f.token_url.is_empty()
+            && f.client_id.is_empty()
+            && f.client_secret.is_empty()
+            && f.scopes.is_empty();
         let new = if empty {
             None
         } else {

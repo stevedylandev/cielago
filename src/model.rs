@@ -118,8 +118,57 @@ pub enum AuthStyle {
     Post,
 }
 
+/// Which authentication scheme a collection uses. `Oauth2` is the default so
+/// collections written before bearer/api-key support (their `auth` object has
+/// no `kind`) keep loading as the client-credentials config they were.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum AuthKind {
+    #[default]
+    Oauth2,
+    /// A fixed bearer token sent as `Authorization: Bearer <token>`.
+    Bearer,
+    /// A fixed value sent in an arbitrary header (defaults to `X-API-Key`).
+    #[serde(rename = "apikey")]
+    ApiKey,
+}
+
+impl AuthKind {
+    pub const ALL: [AuthKind; 3] = [AuthKind::Bearer, AuthKind::ApiKey, AuthKind::Oauth2];
+
+    pub fn next(self) -> Self {
+        let i = Self::ALL.iter().position(|k| *k == self).unwrap_or(0);
+        Self::ALL[(i + 1) % Self::ALL.len()]
+    }
+
+    pub fn title(self) -> &'static str {
+        match self {
+            AuthKind::Oauth2 => "oauth2",
+            AuthKind::Bearer => "bearer",
+            AuthKind::ApiKey => "apikey",
+        }
+    }
+}
+
+/// Header used for API-key auth when the user leaves the header name blank.
+pub const DEFAULT_API_KEY_HEADER: &str = "X-API-Key";
+
+/// Per-collection authentication. One struct carries every scheme's fields
+/// (discriminated by `kind`) so the on-disk shape stays a single flat object
+/// and older OAuth-only collections deserialize unchanged.
+///
+/// Secret-bearing fields (`token`, `client_secret`) may hold a `$(…)` command
+/// substitution, resolved at send time — see [`crate::http::resolve_secret`].
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OAuthConfig {
+    #[serde(default)]
+    pub kind: AuthKind,
+    /// Bearer token, or API-key value (secret; supports `$(…)`).
+    #[serde(default)]
+    pub token: String,
+    /// Header name for `ApiKey` auth; empty means [`DEFAULT_API_KEY_HEADER`].
+    #[serde(default)]
+    pub header: String,
     #[serde(default)]
     pub token_url: String,
     #[serde(default)]
@@ -132,9 +181,25 @@ pub struct OAuthConfig {
     pub auth_style: AuthStyle,
 }
 
+/// Historical name; `OAuthConfig` now covers every scheme via its `kind`.
+pub type AuthConfig = OAuthConfig;
+
 impl OAuthConfig {
+    /// Whether the active scheme has enough filled in to attempt auth.
     pub fn is_configured(&self) -> bool {
-        !self.token_url.is_empty() && !self.client_id.is_empty()
+        match self.kind {
+            AuthKind::Oauth2 => !self.token_url.is_empty() && !self.client_id.is_empty(),
+            AuthKind::Bearer | AuthKind::ApiKey => !self.token.is_empty(),
+        }
+    }
+
+    /// The header name to carry an API key, falling back to the default.
+    pub fn api_key_header(&self) -> &str {
+        if self.header.trim().is_empty() {
+            DEFAULT_API_KEY_HEADER
+        } else {
+            self.header.trim()
+        }
     }
 }
 

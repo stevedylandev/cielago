@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
-use cielago::http::{fetch_token, send_request};
-use cielago::model::{AuthStyle, KeyValueRow, Method, OAuthConfig, SavedRequest};
+use cielago::http::{fetch_token, send_request, send_with_auth};
+use cielago::model::{AuthKind, AuthStyle, KeyValueRow, Method, OAuthConfig, SavedRequest};
 use wiremock::matchers::{method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -28,7 +28,7 @@ async fn sends_request_with_params_and_uuid_header() {
 
     let vars = HashMap::from([("tenant".to_string(), "acme".to_string())]);
     let client = reqwest::Client::new();
-    let resp = send_request(&client, &server.uri(), &req, &vars, None)
+    let resp = send_request(&client, &server.uri(), &req, &vars, None, &[])
         .await
         .unwrap();
 
@@ -66,6 +66,7 @@ async fn oauth_client_credentials_basic_flow() {
         client_secret: "my-secret".into(),
         scopes: vec!["read".into(), "write".into()],
         auth_style: AuthStyle::Basic,
+        ..Default::default()
     };
     let client = reqwest::Client::new();
     let token = fetch_token(&client, &cfg).await.unwrap();
@@ -108,6 +109,7 @@ async fn oauth_post_style_sends_creds_in_body() {
         client_secret: "secret2".into(),
         scopes: vec![],
         auth_style: AuthStyle::Post,
+        ..Default::default()
     };
     let client = reqwest::Client::new();
     fetch_token(&client, &cfg).await.unwrap();
@@ -131,9 +133,16 @@ async fn bearer_token_injected_unless_header_present() {
 
     let client = reqwest::Client::new();
     let req = SavedRequest::blank("x");
-    send_request(&client, &server.uri(), &req, &HashMap::new(), Some("tok-1"))
-        .await
-        .unwrap();
+    send_request(
+        &client,
+        &server.uri(),
+        &req,
+        &HashMap::new(),
+        Some("tok-1"),
+        &[],
+    )
+    .await
+    .unwrap();
     let received = server.received_requests().await.unwrap();
     assert_eq!(
         received[0]
@@ -155,6 +164,7 @@ async fn bearer_token_injected_unless_header_present() {
         &req2,
         &HashMap::new(),
         Some("tok-2"),
+        &[],
     )
     .await
     .unwrap();
@@ -167,6 +177,87 @@ async fn bearer_token_injected_unless_header_present() {
             .to_str()
             .unwrap(),
         "Bearer manual"
+    );
+}
+
+#[tokio::test]
+async fn api_key_auth_resolves_shell_secret_into_header() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/x"))
+        .respond_with(ResponseTemplate::new(200))
+        .mount(&server)
+        .await;
+
+    // Value is a `$(…)` command substitution, resolved at send time.
+    let cfg = OAuthConfig {
+        kind: AuthKind::ApiKey,
+        token: "$(printf 'sk-secret')".into(),
+        header: "X-Api-Key".into(),
+        ..Default::default()
+    };
+    let req = SavedRequest::blank("x");
+    let client = reqwest::Client::new();
+    let outcome = send_with_auth(
+        &client,
+        &server.uri(),
+        &req,
+        &HashMap::new(),
+        Some(&cfg),
+        None,
+    )
+    .await;
+    assert!(outcome.result.is_ok(), "{:?}", outcome.result.err());
+    assert!(outcome.token.is_none());
+
+    let received = server.received_requests().await.unwrap();
+    assert_eq!(
+        received[0]
+            .headers
+            .get("x-api-key")
+            .unwrap()
+            .to_str()
+            .unwrap(),
+        "sk-secret"
+    );
+}
+
+#[tokio::test]
+async fn bearer_auth_sends_resolved_token() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/x"))
+        .respond_with(ResponseTemplate::new(200))
+        .mount(&server)
+        .await;
+
+    let cfg = OAuthConfig {
+        kind: AuthKind::Bearer,
+        token: "plain-tok".into(),
+        ..Default::default()
+    };
+    let req = SavedRequest::blank("x");
+    let client = reqwest::Client::new();
+    let outcome = send_with_auth(
+        &client,
+        &server.uri(),
+        &req,
+        &HashMap::new(),
+        Some(&cfg),
+        None,
+    )
+    .await;
+    assert!(outcome.result.is_ok(), "{:?}", outcome.result.err());
+
+    let received = server.received_requests().await.unwrap();
+    assert_eq!(
+        received[0]
+            .headers
+            .get("authorization")
+            .unwrap()
+            .to_str()
+            .unwrap(),
+        "Bearer plain-tok"
     );
 }
 
@@ -216,8 +307,15 @@ async fn a_pasted_url_sends_to_the_pasted_server() {
     req.sync_path_params();
 
     let client = reqwest::Client::new();
-    let resp = send_request(&client, &parts.origin.unwrap(), &req, &HashMap::new(), None)
-        .await
-        .unwrap();
+    let resp = send_request(
+        &client,
+        &parts.origin.unwrap(),
+        &req,
+        &HashMap::new(),
+        None,
+        &[],
+    )
+    .await
+    .unwrap();
     assert_eq!(resp.status, 200);
 }

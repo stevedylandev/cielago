@@ -12,7 +12,7 @@ src/
 ├── input.rs           # keymap: Normal / Insert / Command modes, popups
 ├── ui.rs               # rendering: sidebar, url bar, editor tabs, response, popups
 ├── highlight.rs         # JSON/XML tokenizer -> styled ratatui Lines
-├── model.rs            # Collection / SavedRequest / KeyValueRow / FieldDoc / OAuthConfig (serde)
+├── model.rs            # Collection / SavedRequest / KeyValueRow / FieldDoc / OAuthConfig+AuthKind (serde)
 ├── store.rs            # ~/.config/cielago persistence, AppConfig
 ├── openapi/
 │   ├── loader.rs        # load spec from file path or http(s) URL, JSON/YAML
@@ -23,7 +23,8 @@ src/
 └── http/
     ├── client.rs           # reqwest request building + response capture
     ├── oauth.rs              # client-credentials token exchange
-    ├── send.rs                # send_with_auth: cache/refresh token, 401 retry
+    ├── secret.rs              # $(cmd) secret resolution via `sh -c`
+    ├── send.rs                # send_with_auth: pick scheme; oauth cache/refresh + 401 retry
     ├── url_input.rs            # pasted URL -> origin / path / query (inverse of build_url)
     └── vars.rs                 # {{name}} + dynamic ({{uuid}}, {{randomInt}}…) substitution
 ```
@@ -44,9 +45,22 @@ OAuth), `input_tests.rs` (full keymap flows over an in-memory `App`),
 - **No remote `$ref`s.** `openapi::resolve` only follows local
   `#/components/...` JSON pointers. Specs that split across files aren't
   supported — bundle them first if you hit this.
-- **Secrets are plaintext.** `OAuthConfig.client_secret` is saved as-is in
-  the collection JSON (explicit user choice, not an oversight). The
-  in-memory `OAuthToken` obtained from it is never persisted.
+- **Auth is one struct, three schemes.** `OAuthConfig` (aliased `AuthConfig`)
+  carries every scheme's fields, discriminated by `AuthKind` (`bearer` /
+  `apikey` / `oauth2`). It stays a single flat JSON object so collections
+  written before bearer/api-key support — whose `auth` has no `kind` — still
+  deserialize (missing `kind` defaults to `oauth2`, which is what they were).
+  The popup (`A`) builds its rows from `App::auth_fields` per kind; the first
+  row is always the kind toggle. `send::send_with_auth` branches on the kind:
+  bearer/apikey resolve their secret and send (no token cache, no 401 retry),
+  oauth2 keeps the cache-and-retry path.
+- **Secrets are plaintext, but can be indirected.** Secret fields
+  (`token`, `client_secret`) are saved as-is in the collection JSON (explicit
+  user choice). To avoid that, a field may hold a single `$(…)` command
+  substitution — `http::resolve_secret` runs it through `sh -c` at send time
+  and uses the trimmed stdout. Only a value that is *entirely* `$(…)` is
+  executed, never one embedded in a longer string. The in-memory `OAuthToken`
+  is never persisted.
 - **Tags become sidebar groups**, first tag only; untagged requests land in
   a `default` group. This wasn't asked for explicitly but was cheap and
   matches how most specs are organized.
@@ -145,7 +159,8 @@ cargo test
 
 ## Known gaps (intentionally out of scope for v1)
 
-Swagger 2.0, non-client-credentials OAuth flows (auth-code, API key),
+Swagger 2.0, interactive OAuth flows (auth-code / device / implicit — only
+client-credentials is automated; bearer and API-key are static),
 collection folders beyond tag grouping, request history/response diffing.
 The Docs tab covers request inputs only — response schemas and status codes
 aren't imported.

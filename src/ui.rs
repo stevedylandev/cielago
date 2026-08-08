@@ -574,7 +574,7 @@ fn draw_help(f: &mut Frame, app: &mut App, area: Rect) {
         Line::raw("  [ or H       previous editor tab"),
         Line::raw("  /            search / filter requests"),
         Line::raw("  E            servers / base URLs"),
-        Line::raw("  A            OAuth client-credentials config"),
+        Line::raw("  A            auth config (bearer / API key / OAuth2)"),
         Line::raw("  :            command line (:w save, :q quit, :q! force, :wq)"),
         Line::raw("  q            quit (warns when unsaved)"),
         Line::raw(""),
@@ -682,26 +682,33 @@ fn draw_env(f: &mut Frame, app: &App, area: Rect) {
 }
 
 fn draw_auth(f: &mut Frame, app: &App, area: Rect) {
+    use crate::app::AuthField;
+    use crate::model::{AuthKind, AuthStyle};
+
     let popup = centered(area, 70, 45);
     f.render_widget(Clear, popup);
     let block = Block::default()
-        .title(" OAuth client credentials — j/k: field · i/Enter: edit · space: toggle style · Esc: save & close ")
+        .title(" Auth — j/k: field · i/Enter: edit · space: toggle · Esc: save & close ")
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::Cyan));
     let inner = block.inner(popup);
     f.render_widget(block, popup);
 
+    let fields = app.auth_fields();
     let mut lines = Vec::new();
-    for (i, label) in App::AUTH_FIELDS.iter().enumerate() {
-        let value = if i == 2 && !app.auth_form.client_secret.is_empty() {
-            "••••••••".to_string()
-        } else if i == 4 {
-            match app.auth_form.auth_style {
-                crate::model::AuthStyle::Basic => "[basic]  post".to_string(),
-                crate::model::AuthStyle::Post => " basic  [post]".to_string(),
-            }
-        } else {
-            app.auth_field_value(i)
+    for (i, field) in fields.iter().enumerate() {
+        let value = match field {
+            AuthField::Kind => toggle_row(app.auth_form.kind, AuthKind::ALL, AuthKind::title),
+            AuthField::Style => toggle_row(
+                app.auth_form.auth_style,
+                [AuthStyle::Basic, AuthStyle::Post],
+                |s| match s {
+                    AuthStyle::Basic => "basic",
+                    AuthStyle::Post => "post",
+                },
+            ),
+            f if f.is_secret() && !app.auth_field_value(i).is_empty() => "••••••••".to_string(),
+            _ => app.auth_field_value(i),
         };
         let style = if i == app.auth_field {
             Style::default()
@@ -710,6 +717,7 @@ fn draw_auth(f: &mut Frame, app: &App, area: Rect) {
         } else {
             Style::default()
         };
+        let label = app.auth_field_label(*field);
         lines.push(
             Line::from(vec![
                 Span::styled(format!(" {label:<28}"), Style::default().fg(Color::Gray)),
@@ -718,5 +726,35 @@ fn draw_auth(f: &mut Frame, app: &App, area: Rect) {
             .style(style),
         );
     }
+
+    // A hint that secret fields understand `$(…)` command substitution.
+    if fields.iter().any(|f| f.is_secret()) {
+        lines.push(Line::raw(""));
+        lines.push(Line::styled(
+            " secret fields accept $(cmd), e.g. $(op read \"op://vault/item/field\")",
+            Style::default().fg(Color::DarkGray),
+        ));
+    }
+
     f.render_widget(Paragraph::new(lines), inner);
+}
+
+/// Render a toggle field as its options with the active one bracketed, e.g.
+/// `[bearer]  apikey  oauth2`.
+fn toggle_row<T: PartialEq + Copy, const N: usize>(
+    current: T,
+    all: [T; N],
+    label: impl Fn(T) -> &'static str,
+) -> String {
+    all.iter()
+        .map(|opt| {
+            let name = label(*opt);
+            if *opt == current {
+                format!("[{name}]")
+            } else {
+                format!(" {name} ")
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }

@@ -15,7 +15,12 @@ collections you can import straight from an OpenAPI spec.
   navigation, `:` command line, `/` incremental search.
 - **Variables** — `{{name}}` from the collection, plus dynamic ones like
   `{{uuid}}`, `{{timestamp}}`, `{{randomInt(1,100)}}`.
-- **OAuth2 client credentials** — per collection, tokens cached in memory only.
+- **Auth per collection** — a fixed bearer token, an API key in a header of
+  your choice, or the OAuth2 client-credentials flow (tokens cached in memory
+  only). Press `A` to configure.
+- **Secrets from your shell** — any secret field (bearer token, API key,
+  OAuth client secret) can be a `$(…)` command, resolved at send time, e.g.
+  `$(op read "op://vault/item/field")`.
 - **Server switcher** — swap base URLs so requests stay portable across envs.
 - **Syntax highlighting** — JSON and XML in both request bodies and responses.
 - **Plain JSON storage** — collections live in `~/.config/cielago/collections/`.

@@ -44,13 +44,15 @@ fn human_size(n: usize) -> String {
 
 /// Send a request against `base_url`, applying `{{variable}}` substitution and
 /// `{pathParam}` replacement. `bearer`, when present, sets the Authorization
-/// header unless the request already defines one.
+/// header unless the request already defines one. `extra_headers` (e.g. an API
+/// key) are added the same way — only for names the request didn't set itself.
 pub async fn send_request(
     client: &reqwest::Client,
     base_url: &str,
     req: &SavedRequest,
     vars: &HashMap<String, String>,
     bearer: Option<&str>,
+    extra_headers: &[(String, String)],
 ) -> Result<HttpResponse> {
     let url = build_url(base_url, req, vars);
 
@@ -71,6 +73,21 @@ pub async fn send_request(
         }
         if name == CONTENT_TYPE {
             has_content_type = true;
+        }
+        headers.insert(name, value);
+    }
+
+    // Auth-supplied headers defer to anything the request set explicitly.
+    for (key, val) in extra_headers {
+        let name = HeaderName::from_bytes(key.as_bytes())
+            .map_err(|e| anyhow!("invalid header name {key:?}: {e}"))?;
+        if headers.contains_key(&name) {
+            continue;
+        }
+        let value = HeaderValue::from_str(val)
+            .map_err(|e| anyhow!("invalid value for header {key:?}: {e}"))?;
+        if name == AUTHORIZATION {
+            has_auth = true;
         }
         headers.insert(name, value);
     }

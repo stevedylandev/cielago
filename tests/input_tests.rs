@@ -535,32 +535,86 @@ fn env_popup_add_and_select_server() {
 
 #[test]
 fn auth_popup_edits_and_applies() {
+    use cielago::model::AuthKind;
+
     let mut app = test_app();
     handle_key(&mut app, char_key('A'));
     assert_eq!(app.popup, Popup::Auth);
-    // field 0 = token url
+    // Field 0 is the kind toggle, defaulting to bearer for a fresh config.
+    // Cycle it to oauth2 (bearer -> apikey -> oauth2).
+    handle_key(&mut app, char_key(' '));
+    handle_key(&mut app, char_key(' '));
+    assert_eq!(app.auth_form.kind, AuthKind::Oauth2);
+    // Now the oauth rows show: 1 = token url, 2 = client id, 5 = style.
+    handle_key(&mut app, char_key('j'));
     handle_key(&mut app, char_key('i'));
     type_str(&mut app, "https://auth.example.com/token");
     handle_key(&mut app, key(KeyCode::Enter));
-    // move to client id, edit
     handle_key(&mut app, char_key('j'));
     handle_key(&mut app, char_key('i'));
     type_str(&mut app, "my-client");
     handle_key(&mut app, key(KeyCode::Enter));
-    // style toggle: field 4
+    // style toggle: field 5
     for _ in 0..3 {
         handle_key(&mut app, char_key('j'));
     }
-    assert_eq!(app.auth_field, 4);
+    assert_eq!(app.auth_field, 5);
     handle_key(&mut app, char_key(' '));
     // close + apply
     handle_key(&mut app, key(KeyCode::Esc));
     assert_eq!(app.popup, Popup::None);
     let auth = app.collection.auth.as_ref().unwrap();
+    assert_eq!(auth.kind, AuthKind::Oauth2);
     assert_eq!(auth.token_url, "https://auth.example.com/token");
     assert_eq!(auth.client_id, "my-client");
     assert_eq!(auth.auth_style, cielago::model::AuthStyle::Post);
     assert!(app.dirty);
+}
+
+#[test]
+fn auth_popup_sets_bearer_token() {
+    use cielago::model::AuthKind;
+
+    let mut app = test_app();
+    handle_key(&mut app, char_key('A'));
+    // Defaults to bearer; field 1 is the token.
+    assert_eq!(app.auth_form.kind, AuthKind::Bearer);
+    handle_key(&mut app, char_key('j'));
+    handle_key(&mut app, char_key('i'));
+    type_str(&mut app, "sk-live-123");
+    handle_key(&mut app, key(KeyCode::Enter));
+    handle_key(&mut app, key(KeyCode::Esc));
+
+    let auth = app.collection.auth.as_ref().unwrap();
+    assert_eq!(auth.kind, AuthKind::Bearer);
+    assert_eq!(auth.token, "sk-live-123");
+}
+
+#[test]
+fn auth_popup_sets_api_key_header() {
+    use cielago::model::AuthKind;
+
+    let mut app = test_app();
+    handle_key(&mut app, char_key('A'));
+    // bearer -> apikey.
+    handle_key(&mut app, char_key(' '));
+    assert_eq!(app.auth_form.kind, AuthKind::ApiKey);
+    // apikey rows: 1 = header name, 2 = value.
+    handle_key(&mut app, char_key('j'));
+    handle_key(&mut app, char_key('i'));
+    type_str(&mut app, "X-Custom-Key");
+    handle_key(&mut app, key(KeyCode::Enter));
+    handle_key(&mut app, char_key('j'));
+    handle_key(&mut app, char_key('i'));
+    type_str(&mut app, "abc123");
+    handle_key(&mut app, key(KeyCode::Enter));
+    handle_key(&mut app, key(KeyCode::Esc));
+
+    let auth = app.collection.auth.as_ref().unwrap();
+    assert_eq!(auth.kind, AuthKind::ApiKey);
+    assert_eq!(auth.header, "X-Custom-Key");
+    assert_eq!(auth.token, "abc123");
+    assert_eq!(auth.api_key_header(), "X-Custom-Key");
 }
 
 #[test]
