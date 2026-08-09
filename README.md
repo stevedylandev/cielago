@@ -4,10 +4,7 @@
 
 Like Postman but it actually works. Terminal native HTTP request builder with OpenAPI support.
 
-<details>
-<summary>Video Overview</summary>
-
-[![Video Overview](https://img.youtube.com/vi/Jv6O-_WH3N8/maxresdefault.jpg)](https://www.youtube.com/watch?v=Jv6O-_WH3N8)
+[Video Overview](https://www.youtube.com/watch?v=Jv6O-_WH3N8)
 
 </details>
 

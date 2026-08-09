@@ -6,8 +6,23 @@ All notable changes to this project will be documented in this file.
 
 ### Miscellaneous Tasks
 
+- Update README
+
+## [0.1.3] - 2026-08-09
+
+### Miscellaneous Tasks
+
 - Add changelog
 - Init changelog
+- Update changelog [skip ci]
+- Removed changelog workflow
+- Update Cargo.lock
+- Updated Cargo.toml meta
+- Updated README
+- Removed tuitextarea
+- Bumped deps
+- Updated README
+- Release v0.1.3
 
 ## [0.1.2] - 2026-08-08
 
