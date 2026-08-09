@@ -85,7 +85,7 @@ Sidebar: `n`/`r`/`d`/`y` new/rename/delete/duplicate, `t` cycle label source.
 
 Tables: `space` toggle row, `i` edit, `a` add, `d` delete, `m` cycle method, `p` edit URL. 
 
-Body/response: `i` edit inline, `e` open in `$EDITOR`, `j`/`k`/`d`/`u`/`g`/`G` scroll.
+Body/response: `e` open in `$EDITOR`, `j`/`k`/`d`/`u`/`g`/`G` scroll.
 
 Press `?` in the TUI for the full list.
 

@@ -77,14 +77,16 @@ fn body_view_is_syntax_highlighted() {
 }
 
 #[test]
-fn body_falls_back_to_the_plain_textarea_while_editing() {
+fn body_stays_highlighted_and_read_only() {
+    // There is no in-app body editor — the body is edited via `$EDITOR`, so it
+    // renders syntax-highlighted regardless of mode.
     let mut app = test_app();
     app.tab = EditorTab::Body;
     app.mode = Mode::Insert;
     let buf = render(&mut app, 100, 40);
 
     assert!(screen(&buf).contains("\"name\""));
-    assert_eq!(fg_of(&buf, "\"name\""), Some(Color::Reset));
+    assert_eq!(fg_of(&buf, "\"name\""), Some(Color::Cyan));
 }
 
 #[test]
@@ -181,11 +183,11 @@ fn renders_without_panicking_in_edge_cases() {
     app.tab = EditorTab::Body;
     render(&mut app, 20, 8);
 
-    app.set_textarea_text("");
+    app.set_body_text("");
     render(&mut app, 100, 40);
 
-    app.set_textarea_text(&(1..=200).map(|i| format!("[{i}]\n")).collect::<String>());
-    app.textarea.move_cursor(tui_textarea::CursorMove::Bottom);
+    app.set_body_text(&(1..=200).map(|i| format!("[{i}]\n")).collect::<String>());
+    app.body_scroll = usize::MAX / 2;
     render(&mut app, 100, 40);
 
     app.tab = EditorTab::Docs;

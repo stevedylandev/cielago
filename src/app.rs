@@ -16,7 +16,6 @@ use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
-use tui_textarea::TextArea;
 use uuid::Uuid;
 
 use crate::http::{HttpResponse, OAuthToken, SendOutcome, send_with_auth, split_url_input};
@@ -314,7 +313,10 @@ pub struct App {
     pub input: LineEdit,
     /// After committing a new row's key, continue to its value cell.
     pub chain_to_value: bool,
-    pub textarea: TextArea<'static>,
+    /// Request body text — source of truth. Edited only via `$EDITOR`.
+    pub body_text: String,
+    /// Scroll offset of the read-only Body view, clamped at render.
+    pub body_scroll: usize,
 
     /// Scroll offset of the Docs tab, reset when another request is opened.
     pub docs_scroll: usize,
@@ -367,7 +369,8 @@ impl App {
             editing: None,
             input: LineEdit::default(),
             chain_to_value: false,
-            textarea: TextArea::default(),
+            body_text: String::new(),
+            body_scroll: 0,
             docs_scroll: 0,
             response: None,
             response_scroll: 0,
@@ -562,26 +565,19 @@ impl App {
             .body
             .clone()
             .unwrap_or_default();
-        self.set_textarea_text(&body);
+        self.set_body_text(&body);
         self.focus = Focus::Editor;
     }
 
-    pub fn set_textarea_text(&mut self, text: &str) {
-        let lines: Vec<String> = if text.is_empty() {
-            vec![String::new()]
-        } else {
-            text.lines().map(String::from).collect()
-        };
-        self.textarea = TextArea::from(lines);
-        self.textarea
-            .set_cursor_line_style(ratatui::style::Style::default());
+    pub fn set_body_text(&mut self, text: &str) {
+        self.body_text = text.to_string();
+        self.body_scroll = 0;
     }
 
-    /// Write the textarea contents back into the selected request body.
+    /// Write the body text back into the selected request body.
     pub fn commit_body(&mut self) {
         let Some(idx) = self.selected else { return };
-        let text = self.textarea.lines().join("\n");
-        let text = text.trim_end_matches('\n').to_string();
+        let text = self.body_text.trim_end_matches('\n').to_string();
         let req = &mut self.collection.requests[idx];
         let new = if text.trim().is_empty() {
             None
@@ -1463,7 +1459,7 @@ fn run_external_edit(
                 app.collection.requests[i].body = Some(content.clone());
                 app.dirty = true;
             }
-            app.set_textarea_text(&content);
+            app.set_body_text(&content);
             app.status = "Body updated from editor".into();
         }
         (ExternalEdit::Body, Ok(s)) => {

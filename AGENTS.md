@@ -67,8 +67,8 @@ OAuth), `input_tests.rs` (full keymap flows over an in-memory `App`),
 - **`Method::parse`, not `FromStr`** — deliberately not the trait, to dodge
   a clippy lint; nothing else depends on `FromStr`.
 - **Vim modes are `Normal` / `Insert` / `Command` / `Search`** — no Visual
-  mode. Insert mode is reused for both single-line field edits (`LineEdit`)
-  and the body `TextArea`; `app.editing` discriminates which. `Search` is the
+  mode. Insert mode is only single-line field edits (`LineEdit`), tracked by
+  `app.editing`; there is no in-app multi-line editor. `Search` is the
   `/` sidebar filter: it re-applies on every keystroke, and `app.filter` (the
   committed query) is deliberately separate from `app.search` (the live
   prompt buffer) so `Esc` can drop the prompt without touching the filter.
@@ -111,11 +111,11 @@ OAuth), `input_tests.rs` (full keymap flows over an in-memory `App`),
   drops input: every character comes back out in some span (there's a test).
   A `syntect`-class dependency would be larger than the rest of the binary,
   and JSON/XML/plain is all a request client shows.
-- **The body has two renderers.** `tui-textarea` styles whole lines only, so
-  the Body tab renders a highlighted `Paragraph` in Normal mode and the raw
-  `TextArea` in Insert mode. The textarea stays the source of truth either
-  way; the read-only view scrolls by moving *its* cursor, which is why `j`/`k`
-  on the Body tab drive `CursorMove`.
+- **The body is read-only in the TUI.** It renders as a highlighted
+  `Paragraph`; edits go through `$EDITOR` (`e`). `app.body_text` is the source
+  of truth and `app.body_scroll` is a plain offset clamped at render, which is
+  why `j`/`k` on the Body tab just move that offset. There is deliberately no
+  in-app text editor — that's what dropped the `tui-textarea` dependency.
 - **Dynamic variables live in the `{{…}}` namespace**, not a second syntax:
   `{{uuid}}`, `{{randomInt(1,10)}}`, `{{isoTimestamp}}`. A collection variable
   shadows a dynamic one of the same name (`{{$name}}` forces the dynamic one),

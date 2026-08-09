@@ -200,8 +200,8 @@ fn sidebar_navigation_and_selection() {
     handle_key(&mut app, key(KeyCode::Enter));
     assert_eq!(app.selected, Some(1)); // createPet
     assert_eq!(app.focus, Focus::Editor);
-    // body loaded into textarea
-    assert!(app.textarea.lines().join("\n").contains("Fido"));
+    // body loaded into the body view
+    assert!(app.body_text.contains("Fido"));
 }
 
 #[test]
@@ -417,17 +417,19 @@ fn add_header_row_with_uuid_variable() {
 }
 
 #[test]
-fn body_textarea_editing() {
+fn body_has_no_inline_editor() {
     let mut app = test_app();
     // select createPet (has a body)
     app.select_request(1);
     handle_key(&mut app, char_key(']'));
     handle_key(&mut app, char_key(']')); // Body tab
     assert_eq!(app.tab, EditorTab::Body);
+    // `i` no longer opens an in-app editor; the body is edited via `$EDITOR`.
     handle_key(&mut app, char_key('i'));
-    assert_eq!(app.mode, Mode::Insert);
-    handle_key(&mut app, key(KeyCode::Esc));
     assert_eq!(app.mode, Mode::Normal);
+    // `e` queues an external edit instead.
+    handle_key(&mut app, char_key('e'));
+    assert_eq!(app.pending_external, Some(cielago::app::ExternalEdit::Body));
     assert!(
         app.collection.requests[1]
             .body
@@ -441,31 +443,30 @@ fn body_textarea_editing() {
 fn body_tab_scrolls_the_read_only_view() {
     let mut app = test_app();
     app.select_request(1);
-    app.set_textarea_text(&(1..=40).map(|i| format!("line {i}\n")).collect::<String>());
+    app.set_body_text(&(1..=40).map(|i| format!("line {i}\n")).collect::<String>());
     app.tab = EditorTab::Body;
 
-    // The highlighted body view follows the textarea cursor.
+    // The read-only body view scrolls with a plain offset.
     handle_key(&mut app, char_key('j'));
     handle_key(&mut app, char_key('j'));
-    assert_eq!(app.textarea.cursor().0, 2);
+    assert_eq!(app.body_scroll, 2);
     handle_key(&mut app, char_key('k'));
-    assert_eq!(app.textarea.cursor().0, 1);
+    assert_eq!(app.body_scroll, 1);
     handle_key(&mut app, char_key('d'));
-    assert_eq!(app.textarea.cursor().0, 16);
+    assert_eq!(app.body_scroll, 16);
     handle_key(&mut app, char_key('u'));
-    assert_eq!(app.textarea.cursor().0, 1);
-    handle_key(&mut app, char_key('G'));
-    assert!(app.textarea.cursor().0 >= 39);
+    assert_eq!(app.body_scroll, 1);
     handle_key(&mut app, char_key('g'));
-    assert_eq!(app.textarea.cursor().0, 0);
+    assert_eq!(app.body_scroll, 0);
 
     // `d` scrolls here rather than deleting a row, but the other editor keys
     // still reach their handlers.
     assert_eq!(app.collection.requests[1].method, Method::Post);
     handle_key(&mut app, char_key('m'));
     assert_eq!(app.collection.requests[1].method, Method::Put);
+    // `i` on the Body tab is a no-op, not an editor.
     handle_key(&mut app, char_key('i'));
-    assert_eq!(app.mode, Mode::Insert);
+    assert_eq!(app.mode, Mode::Normal);
 }
 
 #[test]

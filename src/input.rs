@@ -1,7 +1,6 @@
 //! Vim-style key handling.
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use tui_textarea::CursorMove;
 
 use crate::app::{
     App, CellCol, EditTarget, EditorTab, ExternalEdit, Focus, Mode, Popup, SidebarRow,
@@ -126,7 +125,7 @@ fn normal_sidebar(app: &mut App, key: KeyEvent) {
                 app.dirty = true;
                 if app.selected == Some(idx) {
                     app.selected = None;
-                    app.set_textarea_text("");
+                    app.set_body_text("");
                 }
                 app.selected = app.selected.map(|s| if s > idx { s - 1 } else { s });
                 app.rebuild_sidebar();
@@ -177,26 +176,19 @@ fn normal_editor(app: &mut App, key: KeyEvent) {
                 app.toggle_row(t, app.table_row);
             }
         }
+        // Body has no in-app editor — use `e` for `$EDITOR`. Tables edit inline.
         KeyCode::Char('i') | KeyCode::Char('a') => {
             let is_add = key.code == KeyCode::Char('a');
-            match app.tab {
-                EditorTab::Body => {
-                    app.mode = Mode::Insert;
-                    app.status = "Editing body — Esc to finish".into();
-                }
-                _ => {
-                    if let Some(t) = app.tab.table() {
-                        if is_add {
-                            app.add_row(t);
-                        } else if app.table_row < app.table_len(t) {
-                            app.chain_to_value = false;
-                            app.start_edit(EditTarget::Cell {
-                                table: t,
-                                row: app.table_row,
-                                col: CellCol::Value,
-                            });
-                        }
-                    }
+            if let Some(t) = app.tab.table() {
+                if is_add {
+                    app.add_row(t);
+                } else if app.table_row < app.table_len(t) {
+                    app.chain_to_value = false;
+                    app.start_edit(EditTarget::Cell {
+                        table: t,
+                        row: app.table_row,
+                        col: CellCol::Value,
+                    });
                 }
             }
         }
@@ -220,21 +212,18 @@ fn normal_editor(app: &mut App, key: KeyEvent) {
     }
 }
 
-/// Body-tab movement. The read-only (highlighted) body view follows the
-/// textarea's cursor, so scrolling it is just moving that cursor. Returns
-/// whether the key was consumed.
+/// Body-tab movement. The read-only body view is a plain scroll offset,
+/// clamped against the rendered height in `ui::draw_body`. Returns whether
+/// the key was consumed.
 fn body_scroll(app: &mut App, key: KeyEvent) -> bool {
-    let moves: &[CursorMove] = match key.code {
-        KeyCode::Char('j') | KeyCode::Down => &[CursorMove::Down],
-        KeyCode::Char('k') | KeyCode::Up => &[CursorMove::Up],
-        KeyCode::Char('g') => &[CursorMove::Top],
-        KeyCode::Char('G') => &[CursorMove::Bottom],
-        KeyCode::Char('d') => &[CursorMove::Down; 15],
-        KeyCode::Char('u') => &[CursorMove::Up; 15],
+    match key.code {
+        KeyCode::Char('j') | KeyCode::Down => app.body_scroll += 1,
+        KeyCode::Char('k') | KeyCode::Up => app.body_scroll = app.body_scroll.saturating_sub(1),
+        KeyCode::Char('g') => app.body_scroll = 0,
+        KeyCode::Char('G') => app.body_scroll = usize::MAX / 2,
+        KeyCode::Char('d') => app.body_scroll += 15,
+        KeyCode::Char('u') => app.body_scroll = app.body_scroll.saturating_sub(15),
         _ => return false,
-    };
-    for m in moves {
-        app.textarea.move_cursor(*m);
     }
     true
 }
@@ -305,14 +294,11 @@ fn handle_insert(app: &mut App, key: KeyEvent) {
         }
         return;
     }
-    // Body textarea editing.
+    // No in-app body editor: body is edited via `$EDITOR` (`e`). Any stray
+    // Insert-mode key just returns to Normal.
     if key.code == KeyCode::Esc {
-        app.commit_body();
         app.mode = Mode::Normal;
-        app.status = "Body updated".into();
-        return;
     }
-    app.textarea.input(key);
 }
 
 // ----- Search mode (sidebar filter) -----

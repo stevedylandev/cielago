@@ -221,37 +221,22 @@ fn draw_editor(f: &mut Frame, app: &mut App, area: Rect) {
     }
 }
 
-/// The body is syntax-highlighted while read-only and handed to the raw
-/// `TextArea` during editing: `tui-textarea` styles whole lines only, so one
-/// widget cannot do both. The textarea stays the source of truth either way —
-/// the read-only view renders its lines and follows its cursor.
+/// The body is syntax-highlighted and read-only; edits go through `$EDITOR`
+/// (`e`). `body_scroll` is a plain offset, clamped here against the content.
 fn draw_body(f: &mut Frame, app: &mut App, area: Rect) {
-    // Insert mode with no `editing` target means the textarea has the keys.
-    if app.mode == Mode::Insert && app.editing.is_none() {
-        app.textarea.set_block(
-            Block::default()
-                .title(" Body — Esc: done ")
-                .borders(Borders::NONE),
-        );
-        f.render_widget(&app.textarea, area);
-        return;
-    }
-
     let block = Block::default()
-        .title(" Body — i: edit · e: $EDITOR · j/k: scroll ")
+        .title(" Body — e: $EDITOR · j/k: scroll ")
         .borders(Borders::NONE);
     let inner = block.inner(area);
     f.render_widget(block, area);
 
-    let text = app.textarea.lines().join("\n");
-    let mut lines = highlight::highlight(&text, true);
-    // Mark where `i` would drop the cursor.
-    let cursor_row = app.textarea.cursor().0;
-    if let Some(line) = lines.get_mut(cursor_row) {
-        *line = std::mem::take(line).style(Style::default().bg(Color::Rgb(40, 40, 40)));
-    }
-    let offset = centered_offset(cursor_row, lines.len(), inner.height as usize);
-    f.render_widget(Paragraph::new(lines).scroll((offset as u16, 0)), inner);
+    let lines = highlight::highlight(&app.body_text, true);
+    let max = lines.len().saturating_sub(1);
+    app.body_scroll = app.body_scroll.min(max);
+    f.render_widget(
+        Paragraph::new(lines).scroll((app.body_scroll as u16, 0)),
+        inner,
+    );
 }
 
 /// Read-only view of what the spec says about this request: the operation
@@ -601,8 +586,7 @@ fn draw_help(f: &mut Frame, app: &mut App, area: Rect) {
         Line::raw(""),
         Line::styled("Body tab", Style::default().add_modifier(Modifier::BOLD)),
         Line::raw("  j/k, d/u     scroll · g/G top/bottom"),
-        Line::raw("  i            edit inline (Esc to finish)"),
-        Line::raw("  e            open in $EDITOR"),
+        Line::raw("  e            edit in $EDITOR"),
         Line::raw(""),
         Line::styled("Docs tab", Style::default().add_modifier(Modifier::BOLD)),
         Line::raw("  types, enums and descriptions from the spec (* = required)"),
