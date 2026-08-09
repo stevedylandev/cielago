@@ -15,9 +15,9 @@ exclude = ["/.github", "/dist-workspace.toml", "/cliff.toml"]
 [dependencies]
 anyhow = "1.0.104"
 clap = { version = "4.6.6", features = ["derive"] }
-crossterm = "0.28.1"
+crossterm = "0.29.0"
 dirs = "6.0.0"
-ratatui = "0.29.0"
+ratatui = "0.30.2"
 reqwest = { version = "0.13.4", default-features = false, features = [
     "rustls",
     "json",
