@@ -1,6 +1,6 @@
 [package]
 name = "cielago"
-version = "0.1.2"
+version = "0.1.3"
 edition = "2024"
 authors = ["Steve Simkins <stevedsimkins@gmail.com>"]
 description = "Like Postman but actually works"
