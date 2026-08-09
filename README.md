@@ -4,6 +4,13 @@
 
 Like Postman but it actually works. Terminal native HTTP request builder with OpenAPI support.
 
+<details>
+<summary>Video Overview</summary>
+
+<iframe width="560" height="315" src="https://www.youtube.com/embed/Jv6O-_WH3N8?si=Os5WNOyLasV69oEC" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
+
+</details>
+
 ## Features
 
 - **OpenAPI 3.x import** — turn a spec (file or URL) into a collection with requests, params, example bodies, servers, and docs prefilled.
@@ -81,11 +88,11 @@ cielago path <name>              # print the collection's JSON path
 | `:` | Command line (`:w`, `:q`, `:new`, `:open`, …) |
 | `?` | Help |
 
-Sidebar: `n`/`r`/`d`/`y` new/rename/delete/duplicate, `t` cycle label source.
-
-Tables: `space` toggle row, `i` edit, `a` add, `d` delete, `m` cycle method, `p` edit URL. 
-
-Body/response: `e` open in `$EDITOR`, `j`/`k`/`d`/`u`/`g`/`G` scroll.
+| Context | Keys |
+|---|---|
+| Sidebar | `n`/`r`/`d`/`y` new/rename/delete/duplicate, `t` cycle label source |
+| Tables | `space` toggle row, `i` edit, `a` add, `d` delete, `m` cycle method, `p` edit URL |
+| Body/response | `e` open in `$EDITOR`, `j`/`k`/`d`/`u`/`g`/`G` scroll |
 
 Press `?` in the TUI for the full list.
 
