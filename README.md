@@ -10,7 +10,7 @@ Like Postman but it actually works. Terminal native HTTP request builder with Op
 
 ## Features
 
-- **OpenAPI 3.x import** — turn a spec (file or URL) into a collection with requests, params, example bodies, servers, and docs prefilled.
+- **OpenAPI 3.x import** — turn a spec (file or URL) into a collection with requests, params, example bodies, servers, and docs prefilled. Import walks you through auth (bearer / api key / oauth2), picking an active server, and display preferences; pass `-y` to skip it.
 - **Ad-hoc collections** — no spec needed; paste a full URL and it's split into server, path, and query params for you.
 - **Vim-style TUI** — three panes (requests / editor / response), `j`/`k` navigation, `:` command line, `/` incremental search.
 - **Variables** — `{{name}}` from the collection, plus dynamic ones like `{{uuid}}`, `{{timestamp}}`, `{{randomInt(1,100)}}`.
@@ -60,7 +60,7 @@ cargo build --release
 ```sh
 cielago                          # open the last-used collection in the TUI
 cielago open [name]              # open a specific collection
-cielago import <spec|url>        # import an OpenAPI 3.x spec
+cielago import <spec|url> [-y]   # import an OpenAPI 3.x spec (-y skips setup)
 cielago new <name> [--server u]  # create an empty collection and open it
 cielago list [-l]                # list collections (-l adds counts + paths)
 cielago info <name>              # servers, counts, auth, groups

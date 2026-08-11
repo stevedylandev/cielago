@@ -1,13 +1,15 @@
 use std::collections::BTreeMap;
 use std::fs;
-use std::io::{self, Write};
+use std::io::{self, IsTerminal, Write};
 use std::process::Command as ProcessCommand;
 
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 
 use cielago::app;
-use cielago::model::Collection;
+use cielago::model::{
+    AuthKind, AuthStyle, Collection, DEFAULT_API_KEY_HEADER, LabelMode, OAuthConfig,
+};
 use cielago::openapi;
 use cielago::store::{self, AppConfig};
 
@@ -43,6 +45,9 @@ enum Command {
         /// Collection name (defaults to the spec's info.title)
         #[arg(long)]
         name: Option<String>,
+        /// Skip interactive setup; keep spec-derived auth/servers and defaults
+        #[arg(short = 'y', long)]
+        yes: bool,
     },
     /// Create an empty collection and open it in the TUI
     New {
@@ -88,7 +93,7 @@ enum Command {
 async fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
-        Some(Command::Import { source, name }) => cmd_import(&source, name).await,
+        Some(Command::Import { source, name, yes }) => cmd_import(&source, name, yes).await,
         Some(Command::New { name, server }) => cmd_new(&name, server).await,
         Some(Command::List { long }) => cmd_list(long),
         Some(Command::Open { name }) => cmd_open(name).await,
@@ -102,7 +107,7 @@ async fn main() -> Result<()> {
     }
 }
 
-async fn cmd_import(source: &str, name: Option<String>) -> Result<()> {
+async fn cmd_import(source: &str, name: Option<String>, yes: bool) -> Result<()> {
     let doc = openapi::load_spec(source).await?;
     let name = name
         .or_else(|| {
@@ -112,7 +117,24 @@ async fn cmd_import(source: &str, name: Option<String>) -> Result<()> {
         })
         .unwrap_or_else(|| "imported".to_string());
 
-    let collection = openapi::import_spec(&doc, &name, Some(source.to_string()));
+    // Walk the user through the name, auth, server and display preferences
+    // unless they opted out with `--yes` or stdin isn't a terminal (e.g. a
+    // script or pipe), in which case the spec-derived defaults stand.
+    let interactive = !yes && io::stdin().is_terminal();
+    let name = if interactive {
+        ask_default("\nCollection name", &name)?
+    } else {
+        name
+    };
+
+    let mut collection = openapi::import_spec(&doc, &name, Some(source.to_string()));
+
+    if interactive {
+        prompt_auth(&mut collection)?;
+        prompt_server(&mut collection)?;
+        prompt_preferences(&mut collection)?;
+    }
+
     let path = store::save_collection(&collection)?;
 
     println!(
@@ -121,15 +143,209 @@ async fn cmd_import(source: &str, name: Option<String>) -> Result<()> {
         path.display()
     );
     println!("  {} requests", collection.requests.len());
-    if !collection.servers.is_empty() {
-        println!("  servers: {}", collection.servers.join(", "));
-    }
-    if let Some(auth) = &collection.auth {
+    if collection.servers.is_empty() {
+        println!("  servers: (none)");
+    } else {
         println!(
-            "  oauth2 client-credentials: {} (set client id/secret with A in the TUI)",
-            auth.token_url
+            "  servers: {} (active: {})",
+            collection.servers.join(", "),
+            collection
+                .base_url()
+                .unwrap_or(collection.servers[0].as_str())
         );
     }
+    match &collection.auth {
+        Some(auth) => println!("  auth: {}", auth_summary(auth)),
+        None => println!("  auth: none"),
+    }
+    Ok(())
+}
+
+/// One-line description of a configured auth scheme for the import summary.
+fn auth_summary(auth: &OAuthConfig) -> String {
+    match auth.kind {
+        AuthKind::Bearer => {
+            let state = if auth.token.is_empty() {
+                " (no token set — set it with A in the TUI)"
+            } else {
+                ""
+            };
+            format!("bearer{state}")
+        }
+        AuthKind::ApiKey => {
+            let state = if auth.token.is_empty() {
+                " (no value set — set it with A in the TUI)"
+            } else {
+                ""
+            };
+            format!("api key in {}{state}", auth.api_key_header())
+        }
+        AuthKind::Oauth2 => {
+            let state = if auth.client_id.is_empty() {
+                " (set client id/secret with A in the TUI)"
+            } else {
+                ""
+            };
+            format!("oauth2 client-credentials, token url {}{state}", auth.token_url)
+        }
+    }
+}
+
+/// Print `prompt`, then read one trimmed line from stdin. An empty reply (or
+/// EOF) comes back as an empty string, which every caller treats as "leave the
+/// current value" or "skip".
+fn ask(prompt: &str) -> Result<String> {
+    print!("{prompt}");
+    io::stdout().flush()?;
+    let mut line = String::new();
+    io::stdin().read_line(&mut line)?;
+    Ok(line.trim().to_string())
+}
+
+/// Like [`ask`], but shows `current` as the value kept when the reply is blank.
+fn ask_default(label: &str, current: &str) -> Result<String> {
+    let suffix = if current.is_empty() {
+        String::new()
+    } else {
+        format!(" [{current}]")
+    };
+    let answer = ask(&format!("{label}{suffix}: "))?;
+    Ok(if answer.is_empty() {
+        current.to_string()
+    } else {
+        answer
+    })
+}
+
+/// Choose the collection's auth scheme, then collect that scheme's values. Any
+/// value may be left blank and filled in later from the TUI. A scheme the spec
+/// implied (e.g. oauth2 from a `clientCredentials` flow) is offered as default
+/// and seeds the oauth2 field prompts.
+fn prompt_auth(collection: &mut Collection) -> Result<()> {
+    let detected = collection.auth.as_ref().map(|a| a.kind);
+    println!("\nAuthentication:");
+    println!("  1) none");
+    println!("  2) bearer token");
+    println!("  3) api key");
+    println!("  4) oauth2 client-credentials");
+    let default_choice = match detected {
+        Some(AuthKind::Bearer) => 2,
+        Some(AuthKind::ApiKey) => 3,
+        Some(AuthKind::Oauth2) => 4,
+        None => 1,
+    };
+    let raw = ask(&format!("  choose [1-4] (default {default_choice}): "))?;
+    let choice = if raw.is_empty() {
+        default_choice
+    } else {
+        raw.parse().unwrap_or(default_choice)
+    };
+
+    collection.auth = match choice {
+        2 => {
+            let token = ask("  bearer token (blank to set later): ")?;
+            Some(OAuthConfig {
+                kind: AuthKind::Bearer,
+                token,
+                ..Default::default()
+            })
+        }
+        3 => {
+            let header = ask(&format!(
+                "  header name (blank for {DEFAULT_API_KEY_HEADER}): "
+            ))?;
+            let token = ask("  api key value (blank to set later): ")?;
+            Some(OAuthConfig {
+                kind: AuthKind::ApiKey,
+                header,
+                token,
+                ..Default::default()
+            })
+        }
+        4 => {
+            // Reuse spec-derived token url/scopes as defaults when present.
+            let mut cfg = collection.auth.clone().unwrap_or_default();
+            cfg.kind = AuthKind::Oauth2;
+            cfg.token_url = ask_default("  token url", &cfg.token_url)?;
+            cfg.client_id = ask("  client id (blank to set later): ")?;
+            cfg.client_secret = ask("  client secret (blank to set later): ")?;
+            let scopes = ask_default("  scopes (space-separated)", &cfg.scopes.join(" "))?;
+            cfg.scopes = scopes.split_whitespace().map(String::from).collect();
+            let style = ask("  send credentials via [1] basic header or [2] form body (default 1): ")?;
+            cfg.auth_style = if style == "2" {
+                AuthStyle::Post
+            } else {
+                AuthStyle::Basic
+            };
+            Some(cfg)
+        }
+        _ => None,
+    };
+    Ok(())
+}
+
+/// Pick the active base URL. Spec-derived servers are offered by number; a
+/// typed URL is added and made active; a blank reply keeps the first (or none).
+fn prompt_server(collection: &mut Collection) -> Result<()> {
+    println!("\nServer:");
+    if collection.servers.is_empty() {
+        let url = normalize_server(&ask("  base url (blank for none): ")?);
+        if !url.is_empty() {
+            collection.servers.push(url);
+            collection.active_server = 0;
+        }
+        return Ok(());
+    }
+
+    println!("  detected:");
+    for (i, s) in collection.servers.iter().enumerate() {
+        println!("    {}) {s}", i + 1);
+    }
+    let answer = ask("  choose a number, type a new url, or blank for #1: ")?;
+    if answer.is_empty() {
+        collection.active_server = 0;
+    } else if let Ok(n) = answer.parse::<usize>() {
+        if (1..=collection.servers.len()).contains(&n) {
+            collection.active_server = n - 1;
+        }
+    } else {
+        let url = normalize_server(&answer);
+        let idx = collection
+            .servers
+            .iter()
+            .position(|s| *s == url)
+            .unwrap_or_else(|| {
+                collection.servers.push(url);
+                collection.servers.len() - 1
+            });
+        collection.active_server = idx;
+    }
+    Ok(())
+}
+
+/// Trim surrounding whitespace and a trailing slash so a typed URL matches the
+/// form imported servers are stored in (and doesn't duplicate one).
+fn normalize_server(url: &str) -> String {
+    url.trim().trim_end_matches('/').to_string()
+}
+
+/// Collection display preferences: how the sidebar labels requests, and whether
+/// tag groups start collapsed.
+fn prompt_preferences(collection: &mut Collection) -> Result<()> {
+    println!("\nPreferences:");
+    println!("  label requests by:");
+    println!("    1) name");
+    println!("    2) summary");
+    println!("    3) path");
+    let answer = ask("  choose [1-3] (default 1): ")?;
+    collection.label_mode = match answer.as_str() {
+        "2" => LabelMode::Summary,
+        "3" => LabelMode::Path,
+        _ => LabelMode::Name,
+    };
+
+    let answer = ask("  collapse tag groups on open? [y/N]: ")?;
+    collection.groups_collapsed = matches!(answer.to_ascii_lowercase().as_str(), "y" | "yes");
     Ok(())
 }
 
