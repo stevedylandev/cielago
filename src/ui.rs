@@ -290,6 +290,7 @@ fn draw_docs(f: &mut Frame, app: &mut App, area: Rect) {
                 ("query", "Query params"),
                 ("header", "Headers"),
                 ("body", "Body"),
+                ("response", "Response"),
             ] {
                 let fields = req.docs.iter().filter(|d| d.location == location);
                 let mut first = true;

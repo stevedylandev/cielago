@@ -4,7 +4,7 @@ use std::collections::HashSet;
 
 use serde_json::Value;
 
-use super::docs::{body_docs, param_doc};
+use super::docs::{body_docs, param_doc, response_docs};
 use super::examples::example_for_schema;
 use super::resolve::deref;
 use crate::model::{AuthStyle, Collection, KeyValueRow, Method, OAuthConfig, SavedRequest};
@@ -175,6 +175,12 @@ fn build_request(
     if let Some(schema) = body_media(doc, op).and_then(|m| m.get("schema")) {
         req.docs.extend(body_docs(doc, schema));
     }
+    if let Some(content) = success_response_content(doc, op)
+        && let Some((_, media)) = pick_media(content)
+        && let Some(schema) = media.get("schema")
+    {
+        req.docs.extend(response_docs(doc, schema));
+    }
     req
 }
 
@@ -205,6 +211,16 @@ fn request_media_type(doc: &Value, op: &Value) -> Option<String> {
 /// Media type from the first success response (or `default`), so `Accept`
 /// matches what the endpoint actually returns.
 fn response_media_type(doc: &Value, op: &Value) -> Option<String> {
+    let content = success_response_content(doc, op)?;
+    pick_media(content).map(|(k, _)| k.clone())
+}
+
+/// The `content` map of the first success response (or `default`) — the shape
+/// the endpoint returns, used for both the `Accept` header and response docs.
+fn success_response_content<'a>(
+    doc: &'a Value,
+    op: &'a Value,
+) -> Option<&'a serde_json::Map<String, Value>> {
     let responses = op.get("responses").and_then(Value::as_object)?;
     let resp = responses
         .iter()
@@ -215,8 +231,7 @@ fn response_media_type(doc: &Value, op: &Value) -> Option<String> {
                 .find(|(code, _)| code.as_str() == "default")
         })
         .map(|(_, v)| v)?;
-    let content = deref(doc, resp).get("content").and_then(Value::as_object)?;
-    pick_media(content).map(|(k, _)| k.clone())
+    deref(doc, resp).get("content").and_then(Value::as_object)
 }
 
 /// Header names from apiKey security schemes this operation requires,

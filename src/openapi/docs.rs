@@ -51,20 +51,39 @@ pub fn param_doc(doc: &Value, p: &Value) -> FieldDoc {
 /// Documentation for a request body schema, flattened to dotted paths:
 /// `owner.name`, `pets[].tag`. A body that isn't an object gets a single row.
 pub fn body_docs(doc: &Value, schema: &Value) -> Vec<FieldDoc> {
+    schema_docs(doc, schema, "body")
+}
+
+/// Same flattening as [`body_docs`], for a success response schema. Rows land
+/// under `location: "response"` so the Docs tab lists them separately.
+pub fn response_docs(doc: &Value, schema: &Value) -> Vec<FieldDoc> {
+    schema_docs(doc, schema, "response")
+}
+
+/// Flatten `schema` into dotted-path rows tagged with `location`. A schema that
+/// isn't an object gets a single `(location)` row.
+fn schema_docs(doc: &Value, schema: &Value, location: &str) -> Vec<FieldDoc> {
     let mut out = Vec::new();
-    flatten(doc, schema, "", 0, &mut out);
+    flatten(doc, schema, "", 0, location, &mut out);
     if out.is_empty() {
         let mut field = field_doc(doc, schema);
         if !field.ty.is_empty() && field.ty != "object" {
-            field.name = "(body)".into();
-            field.location = "body".into();
+            field.name = format!("({location})");
+            field.location = location.into();
             out.push(field);
         }
     }
     out
 }
 
-fn flatten(doc: &Value, schema: &Value, prefix: &str, depth: usize, out: &mut Vec<FieldDoc>) {
+fn flatten(
+    doc: &Value,
+    schema: &Value,
+    prefix: &str,
+    depth: usize,
+    location: &str,
+    out: &mut Vec<FieldDoc>,
+) {
     if depth > MAX_BODY_DEPTH || out.len() >= MAX_BODY_FIELDS {
         return;
     }
@@ -73,7 +92,7 @@ fn flatten(doc: &Value, schema: &Value, prefix: &str, depth: usize, out: &mut Ve
     // An array contributes no fields of its own; describe its items under
     // `name[]` so the path reads like the JSON it documents.
     if let Some(items) = schema.get("items") {
-        flatten(doc, items, &format!("{prefix}[]"), depth + 1, out);
+        flatten(doc, items, &format!("{prefix}[]"), depth + 1, location, out);
         return;
     }
 
@@ -98,21 +117,25 @@ fn flatten(doc: &Value, schema: &Value, prefix: &str, depth: usize, out: &mut Ve
             };
             let mut field = field_doc(doc, sub);
             field.name = path.clone();
-            field.location = "body".into();
+            field.location = location.into();
             field.required = required.contains(name.as_str());
             out.push(field);
             // Scalars fall straight back out of this call.
-            flatten(doc, sub, &path, depth + 1, out);
+            flatten(doc, sub, &path, depth + 1, location, out);
         }
     }
 }
 
-/// Schemas contributing properties to `schema`: itself, plus `allOf` members,
-/// which OpenAPI uses for composition/inheritance.
+/// Schemas contributing properties to `schema`: itself, plus the members of any
+/// `allOf`/`oneOf`/`anyOf`. `allOf` is composition; `oneOf`/`anyOf` are
+/// alternatives, but the Docs tab merges every branch's fields flat so nested
+/// objects behind a union still show up.
 fn object_parts<'a>(doc: &'a Value, schema: &'a Value) -> Vec<&'a Value> {
     let mut parts = vec![schema];
-    if let Some(all) = schema.get("allOf").and_then(Value::as_array) {
-        parts.extend(all.iter().map(|s| deref(doc, s)));
+    for key in ["allOf", "oneOf", "anyOf"] {
+        if let Some(members) = schema.get(key).and_then(Value::as_array) {
+            parts.extend(members.iter().map(|s| deref(doc, s)));
+        }
     }
     parts
 }
@@ -332,6 +355,48 @@ mod tests {
         let names: Vec<&str> = docs.iter().map(|d| d.name.as_str()).collect();
         assert_eq!(names, ["id", "note"]);
         assert!(docs[0].required);
+    }
+
+    #[test]
+    fn one_of_object_variants_contribute_nested_fields() {
+        let doc = json!({});
+        // A property whose value is a union of two object shapes: both branches'
+        // fields flatten under the property path.
+        let schema = json!({"type": "object", "properties": {
+            "payment": {"oneOf": [
+                {"type": "object", "properties": {"card": {"type": "string"}}},
+                {"type": "object", "properties": {"iban": {"type": "string"}}}
+            ]}
+        }});
+        let names: Vec<String> = body_docs(&doc, &schema)
+            .into_iter()
+            .map(|d| d.name)
+            .collect();
+        assert!(names.contains(&"payment".to_string()));
+        assert!(names.contains(&"payment.card".to_string()));
+        assert!(names.contains(&"payment.iban".to_string()));
+    }
+
+    #[test]
+    fn response_docs_are_flattened_and_located() {
+        let doc = json!({});
+        let schema = json!({"type": "object", "properties": {
+            "id": {"type": "integer"},
+            "owner": {"type": "object", "properties": {"name": {"type": "string"}}}
+        }});
+        let docs = response_docs(&doc, &schema);
+        let names: Vec<&str> = docs.iter().map(|d| d.name.as_str()).collect();
+        assert_eq!(names, ["id", "owner", "owner.name"]);
+        assert!(docs.iter().all(|d| d.location == "response"));
+    }
+
+    #[test]
+    fn non_object_response_gets_one_row() {
+        let doc = json!({});
+        let docs = response_docs(&doc, &json!({"type": "string"}));
+        assert_eq!(docs.len(), 1);
+        assert_eq!(docs[0].name, "(response)");
+        assert_eq!(docs[0].location, "response");
     }
 
     #[test]
