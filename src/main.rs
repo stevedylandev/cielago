@@ -5,6 +5,7 @@ use std::process::Command as ProcessCommand;
 
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
+use inquire::{Confirm, Select, Text};
 
 use cielago::app;
 use cielago::model::{
@@ -56,6 +57,9 @@ enum Command {
         /// Base URL to start with (becomes the active server)
         #[arg(long, short)]
         server: Option<String>,
+        /// Skip interactive setup; open straight into the TUI
+        #[arg(short = 'y', long)]
+        yes: bool,
     },
     /// List saved collections
     List {
@@ -94,7 +98,7 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Some(Command::Import { source, name, yes }) => cmd_import(&source, name, yes).await,
-        Some(Command::New { name, server }) => cmd_new(&name, server).await,
+        Some(Command::New { name, server, yes }) => cmd_new(&name, server, yes).await,
         Some(Command::List { long }) => cmd_list(long),
         Some(Command::Open { name }) => cmd_open(name).await,
         Some(Command::Delete { name, force }) => cmd_delete(&name, force),
@@ -122,7 +126,8 @@ async fn cmd_import(source: &str, name: Option<String>, yes: bool) -> Result<()>
     // script or pipe), in which case the spec-derived defaults stand.
     let interactive = !yes && io::stdin().is_terminal();
     let name = if interactive {
-        ask_default("\nCollection name", &name)?
+        println!("{BANNER}");
+        Text::new("Collection name").with_default(&name).prompt()?
     } else {
         name
     };
@@ -130,9 +135,7 @@ async fn cmd_import(source: &str, name: Option<String>, yes: bool) -> Result<()>
     let mut collection = openapi::import_spec(&doc, &name, Some(source.to_string()));
 
     if interactive {
-        prompt_auth(&mut collection)?;
-        prompt_server(&mut collection)?;
-        prompt_preferences(&mut collection)?;
+        run_walkthrough(&mut collection)?;
     }
 
     let path = store::save_collection(&collection)?;
@@ -191,88 +194,80 @@ fn auth_summary(auth: &OAuthConfig) -> String {
     }
 }
 
-/// Print `prompt`, then read one trimmed line from stdin. An empty reply (or
-/// EOF) comes back as an empty string, which every caller treats as "leave the
-/// current value" or "skip".
-fn ask(prompt: &str) -> Result<String> {
-    print!("{prompt}");
-    io::stdout().flush()?;
-    let mut line = String::new();
-    io::stdin().read_line(&mut line)?;
-    Ok(line.trim().to_string())
+/// A free-text prompt whose empty submission — or an Esc — comes back as an
+/// empty string, the "leave it blank, fill in from the TUI later" case.
+fn optional_text(message: &str, help: &str) -> Result<String> {
+    Ok(Text::new(message)
+        .with_help_message(help)
+        .prompt_skippable()?
+        .unwrap_or_default())
 }
 
-/// Like [`ask`], but shows `current` as the value kept when the reply is blank.
-fn ask_default(label: &str, current: &str) -> Result<String> {
-    let suffix = if current.is_empty() {
-        String::new()
-    } else {
-        format!(" [{current}]")
-    };
-    let answer = ask(&format!("{label}{suffix}: "))?;
-    Ok(if answer.is_empty() {
-        current.to_string()
-    } else {
-        answer
-    })
+/// A free-text prompt that offers `current` as its default (kept on an empty
+/// reply). With no current value it behaves like a plain optional prompt.
+fn text_default(message: &str, current: &str) -> Result<String> {
+    if current.is_empty() {
+        return optional_text(message, "blank to set later");
+    }
+    Ok(Text::new(message).with_default(current).prompt()?)
+}
+
+/// The shared auth → server → preferences walkthrough, run by both `import`
+/// and `new` once the caller has confirmed a terminal and printed the banner.
+/// Kept separate from the banner and name prompts, which differ per command.
+fn run_walkthrough(collection: &mut Collection) -> Result<()> {
+    prompt_auth(collection)?;
+    prompt_server(collection)?;
+    prompt_preferences(collection)?;
+    Ok(())
 }
 
 /// Choose the collection's auth scheme, then collect that scheme's values. Any
 /// value may be left blank and filled in later from the TUI. A scheme the spec
-/// implied (e.g. oauth2 from a `clientCredentials` flow) is offered as default
-/// and seeds the oauth2 field prompts.
+/// implied (e.g. oauth2 from a `clientCredentials` flow) is pre-selected and
+/// seeds the oauth2 field prompts.
 fn prompt_auth(collection: &mut Collection) -> Result<()> {
-    let detected = collection.auth.as_ref().map(|a| a.kind);
-    println!("\nAuthentication:");
-    println!("  1) none");
-    println!("  2) bearer token");
-    println!("  3) api key");
-    println!("  4) oauth2 client-credentials");
-    let default_choice = match detected {
-        Some(AuthKind::Bearer) => 2,
-        Some(AuthKind::ApiKey) => 3,
-        Some(AuthKind::Oauth2) => 4,
-        None => 1,
+    const NONE: &str = "none";
+    const BEARER: &str = "bearer token";
+    const API_KEY: &str = "api key";
+    const OAUTH2: &str = "oauth2 client-credentials";
+
+    let cursor = match collection.auth.as_ref().map(|a| a.kind) {
+        Some(AuthKind::Bearer) => 1,
+        Some(AuthKind::ApiKey) => 2,
+        Some(AuthKind::Oauth2) => 3,
+        None => 0,
     };
-    let raw = ask(&format!("  choose [1-4] (default {default_choice}): "))?;
-    let choice = if raw.is_empty() {
-        default_choice
-    } else {
-        raw.parse().unwrap_or(default_choice)
-    };
+    let choice = Select::new("Authentication", vec![NONE, BEARER, API_KEY, OAUTH2])
+        .with_starting_cursor(cursor)
+        .prompt()?;
 
     collection.auth = match choice {
-        2 => {
-            let token = ask("  bearer token (blank to set later): ")?;
-            Some(OAuthConfig {
-                kind: AuthKind::Bearer,
-                token,
-                ..Default::default()
-            })
-        }
-        3 => {
-            let header = ask(&format!(
-                "  header name (blank for {DEFAULT_API_KEY_HEADER}): "
-            ))?;
-            let token = ask("  api key value (blank to set later): ")?;
-            Some(OAuthConfig {
-                kind: AuthKind::ApiKey,
-                header,
-                token,
-                ..Default::default()
-            })
-        }
-        4 => {
+        BEARER => Some(OAuthConfig {
+            kind: AuthKind::Bearer,
+            token: optional_text("Bearer token", "blank to set later")?,
+            ..Default::default()
+        }),
+        API_KEY => Some(OAuthConfig {
+            kind: AuthKind::ApiKey,
+            header: Text::new("Header name")
+                .with_default(DEFAULT_API_KEY_HEADER)
+                .prompt()?,
+            token: optional_text("API key value", "blank to set later")?,
+            ..Default::default()
+        }),
+        OAUTH2 => {
             // Reuse spec-derived token url/scopes as defaults when present.
             let mut cfg = collection.auth.clone().unwrap_or_default();
             cfg.kind = AuthKind::Oauth2;
-            cfg.token_url = ask_default("  token url", &cfg.token_url)?;
-            cfg.client_id = ask("  client id (blank to set later): ")?;
-            cfg.client_secret = ask("  client secret (blank to set later): ")?;
-            let scopes = ask_default("  scopes (space-separated)", &cfg.scopes.join(" "))?;
+            cfg.token_url = text_default("Token URL", &cfg.token_url)?;
+            cfg.client_id = optional_text("Client id", "blank to set later")?;
+            cfg.client_secret = optional_text("Client secret", "blank to set later")?;
+            let scopes = text_default("Scopes (space-separated)", &cfg.scopes.join(" "))?;
             cfg.scopes = scopes.split_whitespace().map(String::from).collect();
-            let style = ask("  send credentials via [1] basic header or [2] form body (default 1): ")?;
-            cfg.auth_style = if style == "2" {
+            let style =
+                Select::new("Send credentials via", vec!["basic header", "form body"]).prompt()?;
+            cfg.auth_style = if style == "form body" {
                 AuthStyle::Post
             } else {
                 AuthStyle::Basic
@@ -284,12 +279,11 @@ fn prompt_auth(collection: &mut Collection) -> Result<()> {
     Ok(())
 }
 
-/// Pick the active base URL. Spec-derived servers are offered by number; a
-/// typed URL is added and made active; a blank reply keeps the first (or none).
+/// Pick the active base URL. Spec-derived servers are offered in a list with a
+/// trailing "enter a new URL" escape; a typed URL is added and made active.
 fn prompt_server(collection: &mut Collection) -> Result<()> {
-    println!("\nServer:");
     if collection.servers.is_empty() {
-        let url = normalize_server(&ask("  base url (blank for none): ")?);
+        let url = normalize_server(&optional_text("Base URL", "blank for none")?);
         if !url.is_empty() {
             collection.servers.push(url);
             collection.active_server = 0;
@@ -297,28 +291,31 @@ fn prompt_server(collection: &mut Collection) -> Result<()> {
         return Ok(());
     }
 
-    println!("  detected:");
-    for (i, s) in collection.servers.iter().enumerate() {
-        println!("    {}) {s}", i + 1);
-    }
-    let answer = ask("  choose a number, type a new url, or blank for #1: ")?;
-    if answer.is_empty() {
-        collection.active_server = 0;
-    } else if let Ok(n) = answer.parse::<usize>() {
-        if (1..=collection.servers.len()).contains(&n) {
-            collection.active_server = n - 1;
-        }
+    const NEW: &str = "＋ enter a new URL…";
+    let mut options: Vec<String> = collection.servers.clone();
+    options.push(NEW.to_string());
+    let choice = Select::new("Active server", options).prompt()?;
+
+    if choice == NEW {
+        let url = normalize_server(&optional_text("Base URL", "blank to keep the first")?);
+        collection.active_server = if url.is_empty() {
+            0
+        } else {
+            collection
+                .servers
+                .iter()
+                .position(|s| *s == url)
+                .unwrap_or_else(|| {
+                    collection.servers.push(url);
+                    collection.servers.len() - 1
+                })
+        };
     } else {
-        let url = normalize_server(&answer);
-        let idx = collection
+        collection.active_server = collection
             .servers
             .iter()
-            .position(|s| *s == url)
-            .unwrap_or_else(|| {
-                collection.servers.push(url);
-                collection.servers.len() - 1
-            });
-        collection.active_server = idx;
+            .position(|s| *s == choice)
+            .unwrap_or(0);
     }
     Ok(())
 }
@@ -332,20 +329,16 @@ fn normalize_server(url: &str) -> String {
 /// Collection display preferences: how the sidebar labels requests, and whether
 /// tag groups start collapsed.
 fn prompt_preferences(collection: &mut Collection) -> Result<()> {
-    println!("\nPreferences:");
-    println!("  label requests by:");
-    println!("    1) name");
-    println!("    2) summary");
-    println!("    3) path");
-    let answer = ask("  choose [1-3] (default 1): ")?;
-    collection.label_mode = match answer.as_str() {
-        "2" => LabelMode::Summary,
-        "3" => LabelMode::Path,
+    let label = Select::new("Label requests by", vec!["name", "summary", "path"]).prompt()?;
+    collection.label_mode = match label {
+        "summary" => LabelMode::Summary,
+        "path" => LabelMode::Path,
         _ => LabelMode::Name,
     };
 
-    let answer = ask("  collapse tag groups on open? [y/N]: ")?;
-    collection.groups_collapsed = matches!(answer.to_ascii_lowercase().as_str(), "y" | "yes");
+    collection.groups_collapsed = Confirm::new("Collapse tag groups on open?")
+        .with_default(true)
+        .prompt()?;
     Ok(())
 }
 
@@ -354,7 +347,7 @@ fn prompt_preferences(collection: &mut Collection) -> Result<()> {
 /// `store::resolve_collection`, which bails by contract on a name that doesn't
 /// exist yet — and the path check also catches names that collide after
 /// slugify, same as `cielago rename`.
-async fn cmd_new(name: &str, server: Option<String>) -> Result<()> {
+async fn cmd_new(name: &str, server: Option<String>, yes: bool) -> Result<()> {
     let path = store::collection_path(name)?;
     if path.exists() {
         bail!(
@@ -372,6 +365,16 @@ async fn cmd_new(name: &str, server: Option<String>) -> Result<()> {
             collection.servers.push(url);
         }
     }
+
+    // Same auth/server/preferences walkthrough as import, so a hand-made
+    // collection starts configured rather than blank. Skipped with `--yes` or
+    // when stdin isn't a terminal; either way the TUI opens next to fill in the
+    // rest. A `--server` given on the command line seeds the server prompt.
+    if !yes && io::stdin().is_terminal() {
+        println!("{BANNER}");
+        run_walkthrough(&mut collection)?;
+    }
+
     let path = store::save_collection(&collection)?;
     println!(
         "Created collection \"{}\" -> {}",

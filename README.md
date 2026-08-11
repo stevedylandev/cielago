@@ -61,7 +61,7 @@ cargo build --release
 cielago                          # open the last-used collection in the TUI
 cielago open [name]              # open a specific collection
 cielago import <spec|url> [-y]   # import an OpenAPI 3.x spec (-y skips setup)
-cielago new <name> [--server u]  # create an empty collection and open it
+cielago new <name> [-s u] [-y]   # create a collection (walkthrough; -y skips)
 cielago list [-l]                # list collections (-l adds counts + paths)
 cielago info <name>              # servers, counts, auth, groups
 cielago edit <name>              # edit the collection JSON in $EDITOR
