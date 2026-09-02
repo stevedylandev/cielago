@@ -16,6 +16,7 @@ src/
 ├── store.rs            # ~/.config/cielago persistence, AppConfig
 ├── openapi/
 │   ├── loader.rs        # load spec from file path or http(s) URL, JSON/YAML
+│   ├── swagger2.rs       # Swagger 2.0 -> OpenAPI 3.0 rewrite, applied while parsing
 │   ├── resolve.rs        # local `#/...` $ref resolution (cycle-safe)
 │   ├── examples.rs        # schema -> example JSON value generation
 │   ├── docs.rs             # schema -> FieldDoc (types, enums) for the Docs tab
@@ -42,6 +43,20 @@ OAuth), `input_tests.rs` (full keymap flows over an in-memory `App`),
   onto `~/.config/cielago` on first use (see `LEGACY_DIR_NAMES`), so existing
   collections survive. Drop those migrations once they've had time to run
   everywhere.
+- **Swagger 2.0 is normalised, not supported twice.** `openapi::swagger2`
+  rewrites a 2.0 document into the 3.0 shape inside `loader::parse_spec`, so
+  `import`/`examples`/`docs` only ever see 3.x — adding a dialect to those
+  would have meant a second branch in every schema walk. The rewrite moves
+  `definitions`/`parameters`/`responses`/`securityDefinitions` under
+  `components` (rewriting every local `$ref` to match), folds
+  `schemes`+`host`+`basePath` into `servers`, lifts a parameter's inline
+  `type`/`format`/… into a `schema`, and turns `in: body` / `in: formData`
+  parameters into a `requestBody` keyed by the operation's `consumes`.
+  Unrecognised keys are carried across untouched, so `x-` extensions survive.
+  Deliberately lossy: `collectionFormat` and operation-level `schemes` are
+  dropped (3.0 has no per-operation server, and cielago comma-joins array
+  params either way), and `https` is ordered ahead of `http` so a spec offering
+  both opens on the secure one.
 - **No remote `$ref`s.** `openapi::resolve` only follows local
   `#/components/...` JSON pointers. Specs that split across files aren't
   supported — bundle them first if you hit this.
@@ -159,8 +174,12 @@ cargo test
 
 ## Known gaps (intentionally out of scope for v1)
 
-Swagger 2.0, interactive OAuth flows (auth-code / device / implicit — only
+Interactive OAuth flows (auth-code / device / implicit — only
 client-credentials is automated; bearer and API-key are static),
 collection folders beyond tag grouping, request history/response diffing.
+A form body (2.0 `formData`, or any `x-www-form-urlencoded`/`multipart`
+`requestBody`) is imported as the JSON object that describes it, with the
+matching `Content-Type` — the fields are all there and documented, but the
+body isn't encoded as a form at send time.
 The Docs tab covers request inputs only — response schemas and status codes
 aren't imported.

@@ -243,7 +243,13 @@ fn tmp_new_request_render_shows_get() {
     app.commit_edit();
     let buf = render(&mut app, 100, 40);
     let s = screen(&buf);
-    let line = s.lines().find(|l| l.contains("url (verb path)")).unwrap_or("<none>");
+    let line = s
+        .lines()
+        .find(|l| l.contains("url (verb path)"))
+        .unwrap_or("<none>");
     println!("PROMPT LINE: {:?}", line);
-    assert!(s.contains("url (verb path)> GET"), "screen missing GET prefill");
+    assert!(
+        s.contains("url (verb path)> GET"),
+        "screen missing GET prefill"
+    );
 }
