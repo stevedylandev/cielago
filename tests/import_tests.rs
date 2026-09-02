@@ -283,3 +283,100 @@ fn variables_map_respects_enabled() {
     assert!(!map.contains_key("b"));
     assert!(!map.contains_key(""));
 }
+
+#[tokio::test]
+async fn imports_swagger_20() {
+    let c = import_fixture("petstore20.json", "pets 2.0").await;
+
+    // host + basePath + schemes become servers, https first.
+    assert_eq!(
+        c.servers,
+        vec![
+            "https://api.pets.example.com/v2".to_string(),
+            "http://api.pets.example.com/v2".to_string()
+        ]
+    );
+
+    // `flow: application` is the client-credentials flow.
+    let auth = c.auth.as_ref().expect("auth should be prefilled");
+    assert_eq!(auth.token_url, "https://auth.pets.example.com/oauth/token");
+    assert_eq!(auth.scopes, vec!["read:pets", "write:pets"]);
+
+    assert_eq!(c.requests.len(), 4);
+
+    let list = c.requests.iter().find(|r| r.name == "listPets").unwrap();
+    assert_eq!(list.method, Method::Get);
+    assert_eq!(list.path, "/pets");
+    assert_eq!(list.tags, vec!["pets"]);
+    // Inline `type`/`default` still reach the params they describe.
+    let limit = list.query.iter().find(|q| q.key == "limit").unwrap();
+    assert!(!limit.enabled);
+    assert_eq!(limit.value, "20");
+    let tenant = list
+        .headers
+        .iter()
+        .find(|h| h.key == "X-Tenant-Id")
+        .unwrap();
+    assert!(tenant.enabled);
+    assert_eq!(tenant.value, "acme");
+    // `produces` becomes the Accept header, the apiKey scheme its own row.
+    let accept = list.headers.iter().find(|h| h.key == "Accept").unwrap();
+    assert_eq!(accept.value, "application/json");
+    let key = list.headers.iter().find(|h| h.key == "X-Api-Key").unwrap();
+    assert!(!key.enabled);
+    // Item enums off an array param land in the docs.
+    let tags = list.docs.iter().find(|d| d.name == "tags").unwrap();
+    assert_eq!(tags.ty, "array<string>");
+    assert_eq!(tags.options, ["cat", "dog"]);
+    // The 200 response schema is documented too.
+    assert!(list.docs.iter().any(|d| d.location == "response"));
+
+    // `in: body` becomes the request body, generated from the definition.
+    let create = c.requests.iter().find(|r| r.name == "createPet").unwrap();
+    assert_eq!(create.method, Method::Post);
+    let body = create.body.as_deref().unwrap();
+    assert!(body.contains("\"name\": \"string\""), "body was: {body}");
+    assert!(body.contains("\"tag\": \"friendly\""), "body was: {body}");
+    let content_type = create
+        .headers
+        .iter()
+        .find(|h| h.key == "Content-Type")
+        .unwrap();
+    assert_eq!(content_type.value, "application/json");
+    assert!(
+        create.docs.iter().any(|d| d.name == "name" && d.required),
+        "body fields should be documented"
+    );
+
+    // A shared `#/parameters/…` reference resolves, x-example included.
+    let get_pet = c.requests.iter().find(|r| r.name == "getPet").unwrap();
+    assert_eq!(get_pet.path, "/pets/{petId}");
+    let pet_id = get_pet
+        .path_params
+        .iter()
+        .find(|p| p.key == "petId")
+        .unwrap();
+    assert!(pet_id.enabled);
+    assert_eq!(pet_id.value, "123");
+
+    // formData parameters collapse into one multipart body.
+    let upload = c
+        .requests
+        .iter()
+        .find(|r| r.name == "uploadPetPhoto")
+        .unwrap();
+    let content_type = upload
+        .headers
+        .iter()
+        .find(|h| h.key == "Content-Type")
+        .unwrap();
+    assert_eq!(content_type.value, "multipart/form-data");
+    let body = upload.body.as_deref().unwrap();
+    assert!(body.contains("\"caption\""), "body was: {body}");
+    assert!(body.contains("\"photo\""), "body was: {body}");
+    let caption = upload.docs.iter().find(|d| d.name == "caption").unwrap();
+    assert!(caption.required);
+    assert_eq!(caption.location, "body");
+    // The path-level parameter still applies to the operation.
+    assert!(upload.path_params.iter().any(|p| p.key == "petId"));
+}

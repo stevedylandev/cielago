@@ -1,6 +1,8 @@
 use anyhow::{Context, Result};
 use serde_json::Value;
 
+use super::swagger2;
+
 /// Load a spec from a local file path or an http(s) URL.
 pub async fn load_spec(source: &str) -> Result<Value> {
     if source.starts_with("http://") || source.starts_with("https://") {
@@ -22,13 +24,19 @@ pub async fn load_spec(source: &str) -> Result<Value> {
     }
 }
 
-/// Parse spec text as JSON, falling back to YAML.
+/// Parse spec text as JSON, falling back to YAML. A Swagger 2.0 document is
+/// converted to its OpenAPI 3.0 equivalent here, so every caller downstream
+/// only has to understand one dialect.
 pub fn parse_spec(text: &str) -> Result<Value> {
-    if let Ok(v) = serde_json::from_str::<Value>(text) {
-        return Ok(v);
-    }
-    let v: Value = serde_yaml::from_str(text).context("spec is neither valid JSON nor YAML")?;
-    Ok(v)
+    let v = match serde_json::from_str::<Value>(text) {
+        Ok(v) => v,
+        Err(_) => serde_yaml::from_str(text).context("spec is neither valid JSON nor YAML")?,
+    };
+    Ok(if swagger2::is_swagger2(&v) {
+        swagger2::to_openapi3(v)
+    } else {
+        v
+    })
 }
 
 #[cfg(test)]
@@ -44,6 +52,15 @@ mod tests {
         let v = parse_spec(yaml).unwrap();
         assert_eq!(v["openapi"], "3.1.0");
         assert_eq!(v["info"]["title"], "t");
+    }
+
+    #[test]
+    fn converts_swagger_2_on_parse() {
+        let yaml = "swagger: '2.0'\nhost: api.example.com\nbasePath: /v1\nschemes: [https]\n";
+        let v = parse_spec(yaml).unwrap();
+        assert_eq!(v["openapi"], "3.0.0");
+        assert!(v.get("swagger").is_none());
+        assert_eq!(v["servers"][0]["url"], "https://api.example.com/v1");
     }
 
     #[test]

@@ -39,7 +39,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Import an OpenAPI 3.x spec (JSON/YAML, file path or URL) as a collection
+    /// Import an OpenAPI 2.0/3.x spec (JSON/YAML, file path or URL) as a collection
     Import {
         /// File path or http(s) URL of the spec
         source: String,
@@ -189,7 +189,10 @@ fn auth_summary(auth: &OAuthConfig) -> String {
             } else {
                 ""
             };
-            format!("oauth2 client-credentials, token url {}{state}", auth.token_url)
+            format!(
+                "oauth2 client-credentials, token url {}{state}",
+                auth.token_url
+            )
         }
     }
 }
